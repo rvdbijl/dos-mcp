@@ -62,8 +62,8 @@ arguments: run --project /absolute/path/to/dos-mcp dos-mcp
 working directory: /absolute/path/to/dos-mcp
 ```
 
-For a DOS target, add `DOS_MCP_TARGET` and `DOS_MCP_KEY` to that server
-process's environment. Exact configuration syntax is client-specific.
+For a DOS target, add `DOS_MCP_TARGET` and normally `DOS_MCP_PASSWORD` to that
+server process's environment. Exact configuration syntax is client-specific.
 
 After connection:
 
@@ -76,10 +76,10 @@ The tool details and result shapes are in [MCP tools](mcp-tools.md).
 
 ## Option B: Linux-backed UDP simulator
 
-Choose a throwaway test key:
+Choose a throwaway test passphrase:
 
 ```bash
-TEST_KEY=00112233445566778899AABBCCDDEEFF
+TEST_PASSWORD='local-simulator-only'
 ```
 
 In terminal one:
@@ -87,7 +87,7 @@ In terminal one:
 ```bash
 uv run dos-mcp-simulator \
   --bind 127.0.0.1:21300 \
-  --key "$TEST_KEY" \
+  --password "$TEST_PASSWORD" \
   --root "$PWD"
 ```
 
@@ -95,13 +95,13 @@ In terminal two:
 
 ```bash
 DOS_MCP_TARGET=127.0.0.1:21300 \
-DOS_MCP_KEY="$TEST_KEY" \
+DOS_MCP_PASSWORD="$TEST_PASSWORD" \
 uv run dos-mcp
 ```
 
 This exercises the authenticated UDP protocol, retries, fragmentation, and
 CP437 conversion while using a Linux PTY as the logical target. Do not reuse
-the public example key on a real machine.
+the example password on a real machine.
 
 ## Option C: foreground DOS agent
 
@@ -114,21 +114,22 @@ make -C dos WATCOM=/path/to/watcom all
 On DOS, after loading the adapter's packet driver:
 
 ```dos
-RAGENT 8D6A33C8B7A0521DFEF7926C44819A20 192.168.10.55 21300 0x60
+RAGENT pass:MyUniqueLabPassphrase 192.168.10.55 21300 0x60
 ```
 
 On the modern host:
 
 ```bash
 DOS_MCP_TARGET=192.168.10.55:21300 \
-DOS_MCP_KEY=8D6A33C8B7A0521DFEF7926C44819A20 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
 uv run dos-mcp
 ```
 
-Use a unique random key per machine. The UDP protocol authenticates packets
-but does not encrypt screen or keyboard data, so use a trusted private
-network. Full packet-driver, DOSBox-X, and emergency-stop instructions are in
-[the DOS guide](../dos/README.md).
+Use a unique high-entropy passphrase per machine. The UDP protocol
+authenticates packets but does not encrypt screen or keyboard data, so use a
+trusted private network. Omitting the credential on both sides enables
+unauthenticated open mode for isolated testing. Full packet-driver, DOSBox-X,
+and emergency-stop instructions are in [the DOS guide](../dos/README.md).
 
 ## Verify the checkout
 

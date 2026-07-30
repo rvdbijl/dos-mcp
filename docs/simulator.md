@@ -1,14 +1,14 @@
 # UDP simulator
 
-The simulator wraps `LinuxTerminalBackend` in the same authenticated UDP
-agent protocol used by `RAGENT.EXE`. It separates bridge/transport work from
-DOS toolchain and hardware work.
+The simulator wraps `LinuxTerminalBackend` in the same credentialed (or
+explicitly open) UDP agent protocol used by `RAGENT.EXE`. It separates
+bridge/transport work from DOS toolchain and hardware work.
 
 ```text
 MCP client
    │ stdio
 dos-mcp
-   │ authenticated UDP
+   │ authenticated/open UDP
 dos-mcp-simulator
    │ PTY
 Linux shell
@@ -31,11 +31,11 @@ being represented through the protocol.
 Start the simulator:
 
 ```bash
-SIM_KEY=00112233445566778899AABBCCDDEEFF
+SIM_PASSWORD='local-simulator-only'
 
 uv run dos-mcp-simulator \
   --bind 127.0.0.1:21300 \
-  --key "$SIM_KEY" \
+  --password "$SIM_PASSWORD" \
   --root /tmp/dos-mcp-simulator \
   --shell /bin/sh
 ```
@@ -44,11 +44,14 @@ Start the bridge in another terminal:
 
 ```bash
 DOS_MCP_TARGET=127.0.0.1:21300 \
-DOS_MCP_KEY="$SIM_KEY" \
+DOS_MCP_PASSWORD="$SIM_PASSWORD" \
 uv run dos-mcp
 ```
 
 Connect an MCP client to the bridge process, not directly to the simulator.
+`--key` remains available for a raw 32-hex key. Omitting both credential
+options starts the simulator in visibly warned, unauthenticated open mode;
+omit both `DOS_MCP_KEY` and `DOS_MCP_PASSWORD` on the bridge to match.
 
 ## Lifecycle
 

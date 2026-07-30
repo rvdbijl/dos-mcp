@@ -8,6 +8,7 @@ import pytest
 from dos_mcp.agent_server import UdpAgentServer
 from dos_mcp.backends.udp import UdpBackend
 from dos_mcp.models import Capabilities, Cursor, KeyReceipt, MachineStatus, TextScreen
+from dos_mcp.protocol import OPEN_MODE_KEY
 
 KEY = bytes.fromhex("00112233445566778899aabbccddeeff")
 
@@ -83,11 +84,16 @@ class FakeBackend:
 
 
 class RunningServer:
-    def __init__(self, *, drop_first_response: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        key: bytes = KEY,
+        drop_first_response: bool = False,
+    ) -> None:
         self.backend = FakeBackend()
         self.server = UdpAgentServer(
             self.backend,
-            key=KEY,
+            key=key,
             bind=("127.0.0.1", 0),
             nonce_factory=lambda: 0x12345678,
             drop_first_response=drop_first_response,
@@ -126,6 +132,17 @@ def test_udp_backend_status_capabilities_and_fragmented_screen() -> None:
     assert screen.text[0].startswith("C:\\>DIR")
     assert screen.cursor.column == 7
     assert screen.adapter == "CGA"
+
+
+def test_udp_backend_operates_with_public_open_mode_key() -> None:
+    with RunningServer(key=OPEN_MODE_KEY) as running:
+        backend = UdpBackend(target=running.server.address, key=OPEN_MODE_KEY)
+        try:
+            status = backend.get_status()
+        finally:
+            backend.close()
+
+    assert status.connected is True
 
 
 def test_udp_retry_does_not_repeat_keyboard_mutation() -> None:

@@ -98,7 +98,8 @@ Rows retain trailing spaces. A client should use the dimensions rather than
 trimming or wrapping rows before coordinate-based interpretation.
 
 The foreground screen payload is about 4 KB and is fragmented across
-multiple authenticated UDP datagrams. The bridge exposes a snapshot only
+multiple credentialed UDP datagrams (or open-mode datagrams when explicitly
+configured). The bridge exposes a snapshot only
 after every fragment has passed identity, CRC, and MAC validation.
 
 ## `dos.send_keys`

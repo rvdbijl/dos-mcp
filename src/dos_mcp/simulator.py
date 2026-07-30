@@ -10,14 +10,19 @@ from pathlib import Path
 
 from .agent_server import UdpAgentServer
 from .backends import LinuxTerminalBackend
-from .protocol import parse_key
+from .protocol import OPEN_MODE_KEY, derive_password_key, parse_key
 from .protocol.constants import DEFAULT_PORT
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bind", default=f"127.0.0.1:{DEFAULT_PORT}")
-    parser.add_argument("--key", required=True, help="32 hexadecimal PSK characters")
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--key", help="raw 32-hex protocol key")
+    credentials.add_argument(
+        "--password",
+        help="passphrase from which to derive the 128-bit protocol key",
+    )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--shell", default="/bin/sh")
     return parser
@@ -25,17 +30,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    logging.basicConfig(level=logging.INFO)
     host, raw_port = args.bind.rsplit(":", 1)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     backend = LinuxTerminalBackend(root=args.root, shell=args.shell)
+    if args.key is not None:
+        key = parse_key(args.key)
+    elif args.password is not None:
+        key = derive_password_key(args.password)
+    else:
+        key = OPEN_MODE_KEY
+        logging.warning(
+            "--key and --password are omitted; using unauthenticated open mode"
+        )
     server = UdpAgentServer(
         backend,
-        key=parse_key(args.key),
+        key=key,
         bind=(host, int(raw_port)),
     )
-    logging.basicConfig(level=logging.INFO)
     logging.info("DOS agent simulator listening on %s:%s", *server.address)
     try:
         server.serve_forever(stop)

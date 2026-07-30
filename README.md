@@ -22,7 +22,7 @@ simulator, or the real 16-bit `RAGENT.EXE` foreground DOS endpoint.
 | Status/capabilities | Yes | Yes | Yes |
 | 80×25 text capture | Yes | Yes | Yes |
 | Cursor and cell attributes | Yes | Yes | Yes |
-| Keyboard input | Terminal sequences | Authenticated UDP | BIOS queue |
+| Keyboard input | Terminal sequences | UDP (authenticated or open) | BIOS queue |
 | Retry/fragmentation testing | No | Yes | Yes |
 | Packet-driver Ethernet | No | No | Yes |
 
@@ -43,7 +43,7 @@ Python DOS MCP bridge
     │ transport-independent Backend operations
     ├──────── local PTY ──────── Linux shell
     │
-    └──────── authenticated UDP
+    └──────── authenticated/open UDP
                     │
                     ├──────── Linux simulator
                     └──────── RAGENT.EXE
@@ -91,11 +91,11 @@ permissions of the bridge user.
 Terminal one:
 
 ```bash
-SIM_KEY=00112233445566778899AABBCCDDEEFF
+SIM_PASSWORD='replace-this-test-password'
 
 uv run dos-mcp-simulator \
   --bind 127.0.0.1:21300 \
-  --key "$SIM_KEY" \
+  --password "$SIM_PASSWORD" \
   --root "$PWD"
 ```
 
@@ -103,12 +103,12 @@ Terminal two:
 
 ```bash
 DOS_MCP_TARGET=127.0.0.1:21300 \
-DOS_MCP_KEY="$SIM_KEY" \
+DOS_MCP_PASSWORD="$SIM_PASSWORD" \
 uv run dos-mcp
 ```
 
-The example key is public test data. Generate a unique key for any real
-deployment.
+Use a unique high-entropy passphrase for each real target. A raw 128-bit
+hexadecimal key is still supported for backward compatibility.
 
 ## Quick start: DOS target
 
@@ -121,16 +121,20 @@ make -C dos WATCOM=/path/to/watcom all
 After loading the appropriate DOS packet driver:
 
 ```dos
-RAGENT 8D6A33C8B7A0521DFEF7926C44819A20 192.168.10.55 21300 0x60
+RAGENT pass:MyUniqueLabPassphrase 192.168.10.55 21300 0x60
 ```
 
 Start the bridge with the same key:
 
 ```bash
 DOS_MCP_TARGET=192.168.10.55:21300 \
-DOS_MCP_KEY=8D6A33C8B7A0521DFEF7926C44819A20 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
 uv run dos-mcp
 ```
+
+The credential is optional: omit it on both sides to use open mode. Open mode
+is deliberately conspicuous and unauthenticated; use it only on an isolated
+test network.
 
 See [the foreground DOS guide](dos/README.md) for packet-driver arguments,
 the local emergency stop, and the complete DOSBox-X test.
@@ -142,8 +146,9 @@ shell. Capture and verify the screen before and after sending input.
 
 Protocol version 1 authenticates packets, checks integrity, rejects replayed
 request IDs, and suppresses duplicate mutations. It does not encrypt traffic.
-Use a unique key per target on a trusted private network, and never expose the
-agent UDP port directly to the Internet.
+Use a unique passphrase or key per target on a trusted private network, and
+never expose the agent UDP port directly to the Internet. Open mode allows
+any network peer to control the foreground shell.
 
 Read [Security model](docs/security-model.md),
 [Operations and safety](docs/operations.md), and [Security policy](SECURITY.md)

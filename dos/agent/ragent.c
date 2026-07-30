@@ -51,7 +51,13 @@ static dm_u8 running = 1;
 static dm_u32 agent_start_ticks;
 
 static int parse_ip(const char *text, dm_u8 output[4]);
-static int parse_key(const char *text, dm_u8 output[16]);
+static int parse_raw_key(const char *text, dm_u8 output[16]);
+static int parse_credential(
+    const char *text,
+    dm_u8 output[16],
+    dm_u8 *open_mode
+);
+static int is_hex_key(const char *text);
 static int request_is_newer(dm_u16 candidate, dm_u16 previous);
 static dm_u32 make_nonce(void);
 static void process_datagram(const dm_udp_datagram *datagram);
@@ -88,15 +94,17 @@ int main(int argc, char **argv)
     dm_u8 ip[4] = {10, 0, 2, 15};
     dm_u16 port = AGENT_PORT;
     dm_u8 packet_interrupt = 0x60;
+    dm_u8 open_mode;
     dm_udp_datagram datagram;
     int result;
 
-    if (argc < 2 || argc > 5) {
-        puts("Usage: RAGENT keyhex [ip] [port] [packet-int]");
+    if (argc > 5) {
+        puts("Usage: RAGENT [credential] [ip] [port] [packet-int]");
+        puts("  credential: pass:text, key:32hex, bare text/key, or - for open");
         return 1;
     }
-    if (parse_key(argv[1], base_key) != 0) {
-        puts("RAGENT: key must be 32 non-zero hexadecimal characters");
+    if (parse_credential(argc >= 2 ? argv[1] : 0, base_key, &open_mode) != 0) {
+        puts("RAGENT: invalid or empty credential");
         return 2;
     }
     if (argc >= 3 && parse_ip(argv[2], ip) != 0) {
@@ -120,7 +128,11 @@ int main(int argc, char **argv)
     agent_start_ticks = read_bios_ticks();
     printf("Retro DOS Agent 0.1 - %u.%u.%u.%u:%u\n",
         ip[0], ip[1], ip[2], ip[3], port);
-    puts("Authenticated UDP ready. EXIT or local Ctrl-Alt-Esc stops.");
+    if (open_mode)
+        puts("WARNING: OPEN MODE - packets are not authenticated.");
+    else
+        puts("Authenticated UDP ready.");
+    puts("EXIT or local Ctrl-Alt-Esc stops.");
     print_prompt();
     while (running) {
         if (dm_net_poll(&datagram)) {
@@ -152,7 +164,7 @@ static int parse_ip(const char *text, dm_u8 output[4])
     return 0;
 }
 
-static int parse_key(const char *text, dm_u8 output[16])
+static int parse_raw_key(const char *text, dm_u8 output[16])
 {
     dm_u8 index;
     dm_u8 any = 0;
@@ -174,6 +186,62 @@ static int parse_key(const char *text, dm_u8 output[16])
         any |= output[index];
     }
     return any ? 0 : -1;
+}
+
+static int parse_credential(
+    const char *text,
+    dm_u8 output[16],
+    dm_u8 *open_mode
+)
+{
+    const char *password;
+
+    *open_mode = 0;
+    if (text == 0 || strcmp(text, "-") == 0) {
+        dm_open_mode_key(output);
+        *open_mode = 1;
+        return 0;
+    }
+    if (strncmp(text, "key:", 4) == 0)
+        return parse_raw_key(text + 4, output);
+    if (strncmp(text, "pass:", 5) == 0) {
+        password = text + 5;
+        if (!*password)
+            return -1;
+        dm_derive_password_key(
+            (const dm_u8 *)password,
+            (dm_u16)strlen(password),
+            output
+        );
+        return 0;
+    }
+    if (!*text)
+        return -1;
+    if (is_hex_key(text))
+        return parse_raw_key(text, output);
+    dm_derive_password_key(
+        (const dm_u8 *)text,
+        (dm_u16)strlen(text),
+        output
+    );
+    return 0;
+}
+
+static int is_hex_key(const char *text)
+{
+    dm_u8 index;
+
+    if (strlen(text) != 32)
+        return 0;
+    for (index = 0; index < 32; ++index) {
+        char value = text[index];
+
+        if (!((value >= '0' && value <= '9')
+            || (value >= 'a' && value <= 'f')
+            || (value >= 'A' && value <= 'F')))
+            return 0;
+    }
+    return 1;
 }
 
 static int request_is_newer(dm_u16 candidate, dm_u16 previous)

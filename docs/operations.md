@@ -6,10 +6,10 @@ service.
 
 ## Deployment checklist
 
-Before enabling UDP control:
+Before enabling credentialed UDP control:
 
-1. generate a unique random 16-byte key for the machine;
-2. provision the key directly on the bridge and DOS console;
+1. choose a unique high-entropy passphrase or generate a random 16-byte key;
+2. provision the same credential directly on the bridge and DOS console;
 3. place the target and bridge on a trusted private segment;
 4. block the agent UDP port at external routers and host firewalls;
 5. confirm the packet-driver interrupt, IRQ, I/O base, and target IP;
@@ -19,28 +19,49 @@ Before enabling UDP control:
 9. test the local Ctrl+Alt+Esc emergency stop;
 10. keep a local recovery path to the keyboard, emulator, or power control.
 
-## Key management
+## Credential management
 
-Generate a key:
+The simplest setup uses a passphrase:
+
+```dos
+RAGENT pass:MyUniqueLabPassphrase 192.168.10.55 21300 0x60
+```
+
+```bash
+DOS_MCP_TARGET=192.168.10.55:21300 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
+uv run dos-mcp
+```
+
+The derivation is fast enough for an 8088 and is consequently vulnerable to
+offline guessing of weak passwords. Prefer a generated multiword or random
+passphrase, not a familiar password.
+
+To use a raw key instead, generate one:
 
 ```bash
 openssl rand -hex 16
 ```
 
-Use a different key for every target. Rotate a key when:
+Use a different credential for every target. Rotate it when:
 
 - it appears in a public log, screenshot, shell history, or commit;
 - a bridge host is lost or compromised;
 - target ownership changes;
 - an operator who knew the key should no longer have access.
 
-Version 1 has no key-negotiation or rotation operation. Stop the agent,
+Version 1 has no credential-negotiation or rotation operation. Stop the agent,
 change both configurations, and restart it.
 
 Environment variables can be visible to same-user process inspection on
 some systems. For higher-assurance deployments, launch the bridge through a
 service manager or wrapper that provides the environment without copying the
 secret into a shared script.
+
+Omitting the credential on both peers enables open mode. It is not a
+convenience security setting: anyone able to send UDP to the agent can forge
+commands. Use open mode only on an isolated test network, and treat the
+startup warning as a deployment failure anywhere else.
 
 ## Network boundary
 
@@ -122,8 +143,8 @@ records as sensitive because they can contain:
 - operational timing;
 - possibly secrets entered by mistake.
 
-Never log the protocol key. Diagnostics belong on stderr; stdout must remain
-reserved for MCP stdio.
+Never log the protocol password or raw key. Diagnostics belong on stderr;
+stdout must remain reserved for MCP stdio.
 
 ## Incident response
 
@@ -132,7 +153,7 @@ If unexpected remote input is observed:
 1. use the local stop;
 2. isolate the DOS machine's network;
 3. stop the bridge/simulator;
-4. rotate the target key;
+4. rotate the target credential;
 5. inspect MCP-client history and host logs;
 6. verify files and boot configuration locally;
 7. report a suspected software vulnerability through

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from .backend import Backend
 from .backends import LinuxTerminalBackend, UdpBackend
-from .protocol import parse_key
+from .protocol import OPEN_MODE_KEY, derive_password_key, parse_key
 from .protocol.constants import DEFAULT_PORT
 
 
@@ -20,14 +21,27 @@ class BackendRuntime:
             target = os.environ.get("DOS_MCP_TARGET")
             if target:
                 key_value = os.environ.get("DOS_MCP_KEY")
-                if not key_value:
-                    raise RuntimeError("DOS_MCP_KEY is required with DOS_MCP_TARGET")
+                password = os.environ.get("DOS_MCP_PASSWORD")
+                if key_value is not None and password is not None:
+                    raise RuntimeError(
+                        "set only one of DOS_MCP_KEY and DOS_MCP_PASSWORD"
+                    )
+                if key_value is not None:
+                    key = parse_key(key_value)
+                elif password is not None:
+                    key = derive_password_key(password)
+                else:
+                    key = OPEN_MODE_KEY
+                    logging.getLogger(__name__).warning(
+                        "DOS_MCP_KEY and DOS_MCP_PASSWORD are unset; "
+                        "using unauthenticated open mode"
+                    )
                 host, separator, raw_port = target.rpartition(":")
                 if not separator:
                     host, raw_port = target, str(DEFAULT_PORT)
                 self._backend = UdpBackend(
                     target=(host, int(raw_port)),
-                    key=parse_key(key_value),
+                    key=key,
                 )
             else:
                 root = Path(os.environ.get("DOS_MCP_ROOT", os.getcwd()))

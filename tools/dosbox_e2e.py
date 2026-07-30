@@ -6,7 +6,7 @@ import argparse
 import time
 
 from dos_mcp.backends.udp import UdpBackend
-from dos_mcp.protocol import parse_key
+from dos_mcp.protocol import OPEN_MODE_KEY, derive_password_key, parse_key
 
 
 def connect(target: tuple[str, int], key: bytes, deadline: float) -> UdpBackend:
@@ -27,15 +27,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=21300)
-    parser.add_argument(
-        "--key",
-        default="00112233445566778899AABBCCDDEEFF",
-    )
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--key")
+    credentials.add_argument("--password", default="dosbox-test")
     args = parser.parse_args()
 
+    if args.key is not None:
+        key = parse_key(args.key)
+    elif args.password is not None:
+        key = derive_password_key(args.password)
+    else:
+        key = OPEN_MODE_KEY
     backend = connect(
         (args.host, args.port),
-        parse_key(args.key),
+        key,
         time.monotonic() + 10,
     )
     try:
@@ -60,7 +65,7 @@ def main() -> None:
         if status.uptime_seconds > 30:
             raise AssertionError("agent uptime is not relative to agent start")
         print(
-            "PASS: authenticated UDP, status, capabilities, "
+            "PASS: password-derived authentication, status, capabilities, "
             "fragmented VGA text capture, BIOS keys, and VER output"
         )
         print(

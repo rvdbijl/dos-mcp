@@ -10,7 +10,7 @@ src/dos_mcp/
   models.py             transport-independent results
   terminal.py           bounded text-terminal model
   backends/linux.py     local PTY backend
-  backends/udp.py       reliable authenticated UDP client
+  backends/udp.py       reliable credentialed/open UDP client
   agent_server.py       UDP simulator-side server
   simulator.py          simulator CLI
   protocol/             Python protocol constants and codecs

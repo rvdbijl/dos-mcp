@@ -26,7 +26,7 @@ actually controlling.
 | Topic | Document |
 |---|---|
 | Component boundaries and language choices | [Architecture](architecture.md) |
-| Exact authenticated UDP wire format | [Protocol version 1](protocol.md) |
+| Exact credentialed/open UDP wire format | [Protocol version 1](protocol.md) |
 | DOS callback and foreground-context rules | [DOS reentrancy](dos-reentrancy.md) |
 | Text-screen representation and future graphics | [Video capture](video-capture.md) |
 | Linux-backed UDP target | [Simulator](simulator.md) |

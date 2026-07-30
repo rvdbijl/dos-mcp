@@ -49,17 +49,30 @@ ASCII `123456789` is `29B1`; the XTEA block vector is
 
 ## Authentication and sessions
 
-The configured key is exactly 16 nonzero bytes. `HELLO` carries a 32-bit
+The wire protocol always receives a 16-byte base key. A raw key supplies
+those bytes directly. Password mode computes:
+
+```text
+SHA-256("DOS-MCP credential v1" || NUL || UTF-8(password))[0:16]
+```
+
+Open mode uses the first 16 bytes of
+`SHA-256("DOS-MCP open mode v1" || NUL)`. That value is public: open mode
+preserves packet compatibility but provides no authentication. Credential
+selection is configuration rather than a wire-format field.
+
+`HELLO` carries a 32-bit
 client nonce and is authenticated by the configured key. Its response echoes
 that nonce and carries a 32-bit server nonce, nonzero 16-bit session ID, and
 maximum fragment payload. Both peers derive a 16-byte session key by applying
 XTEA to two nonce-derived blocks.
 
 Ordinary datagrams use a length-strengthened XTEA CBC-MAC, folded to a 32-bit
-tag. Tags are compared in constant time on the modern bridge. This provides
-authentication and integrity, not confidentiality. The deliberately short
-tag is an 8088/trusted-LAN tradeoff: use a unique random key per machine, bind
-only a private network, and never forward the UDP port from the Internet.
+tag. Tags are compared in constant time on the modern bridge. With a secret
+credential this provides authentication and integrity, not confidentiality.
+The deliberately short tag is an 8088/trusted-LAN tradeoff: use a unique
+high-entropy credential per machine, bind only a private network, and never
+forward the UDP port from the Internet.
 
 Requests use monotonically advancing 16-bit IDs with half-range wrap
 comparison. The DOS agent binds a session to source MAC, IP, and UDP port.

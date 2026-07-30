@@ -14,7 +14,7 @@ MCP presentation
 target backend
    │ transport-specific operations
    ▼
-Linux PTY or authenticated UDP
+Linux PTY or authenticated/open UDP
    │
    ▼
 Python simulator or 16-bit DOS foreground agent
@@ -93,14 +93,15 @@ The tradeoff is a larger runtime and weaker single-binary distribution than Rust
 The DOS client uses Open Watcom C plus a small 8086 assembly receive upcall.
 It builds with `-0 -ms -os -s -wx`. `PROTOCHK.EXE` has run inside DOSBox-X,
 and `RAGENT.EXE` has completed the end-to-end NE2000 test. The current
-executable is approximately 27 KB on disk; real 4.77 MHz timing and resident
+executable is approximately 30 KB on disk; real 4.77 MHz timing and resident
 memory measurements remain hardware-verification work.
 
 ## Implemented selection
 
 `BackendRuntime` selects `LinuxTerminalBackend` by default. Setting
-`DOS_MCP_TARGET` and `DOS_MCP_KEY` selects `UdpBackend`, which can talk to
-either `dos-mcp-simulator` or `RAGENT.EXE`.
+`DOS_MCP_TARGET` selects `UdpBackend`, which can talk to either
+`dos-mcp-simulator` or `RAGENT.EXE`. `DOS_MCP_PASSWORD` derives its protocol
+key, `DOS_MCP_KEY` supplies a raw one, and omitting both selects open mode.
 
 ## Deferred architecture
 

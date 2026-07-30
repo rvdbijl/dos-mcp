@@ -41,7 +41,7 @@ program and network agent run under DOSBox-X's DOS environment.
 | FreeDOS | Not yet verified |
 | 286/386+ real mode | Expected but not yet catalogued |
 
-The foreground binary is roughly 27 KB on disk in the current build.
+The foreground binary is roughly 30 KB on disk in the current build.
 Runtime conventional-memory use has not yet been measured on physical
 hardware.
 

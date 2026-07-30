@@ -34,7 +34,7 @@ The configured root is a working-directory boundary, not a filesystem sandbox. A
 | Resource exhaustion | Fixed 80×25 buffer, bounded arguments, nonblocking reads |
 | Child leakage | Backend owns one process group and has idempotent shutdown |
 | MCP stream corruption | No stdout logging or import-time output |
-| UDP spoofing/corruption | Per-machine 128-bit key, authenticated nonce handshake, per-datagram MAC and CRC |
+| UDP spoofing/corruption | Per-machine password-derived or raw 128-bit key, authenticated nonce handshake, per-datagram MAC and CRC |
 | UDP replay/duplicate mutation | Session-bound monotonic request IDs and cached duplicate response |
 | Network disclosure | No encryption; private trusted LAN and no public port forwarding are mandatory |
 | Dangerous DOS operations | Absent from initial capability and tool surface |
@@ -51,8 +51,13 @@ Authentication, integrity, replay protection, and confidentiality are separate p
 
 ## Implemented DOS controls
 
-- Keys must be 32 hexadecimal characters and may not be all zero.
-- Every request, including `HELLO`, is authenticated.
+- Passwords deterministically derive a 128-bit key using domain-separated
+  SHA-256 truncated to 16 bytes; raw 32-hex keys remain supported.
+- Password derivation is intentionally lightweight enough for an 8088, not
+  resistant to offline dictionary guessing. Use a high-entropy passphrase.
+- In credentialed mode every request, including `HELLO`, is authenticated.
+- Optional open mode uses a documented public key and therefore provides no
+  peer authentication. Both programs print/log a warning when it is selected.
 - Malformed, unauthenticated, old-session, and wrong-peer datagrams are
   silently discarded.
 - Request, response, fragment, diagnostic, text, and key counts are bounded.
@@ -66,6 +71,11 @@ The 32-bit XTEA-CBC-MAC tag is a constrained 8088 design, not a substitute
 for a modern encrypted transport. It has an expected online forgery cost of
 roughly 2^32 attempts and the protocol provides no confidentiality. Rate
 limiting and stronger cryptographic alternatives remain open work.
+
+Open mode retains the MAC-shaped wire field, CRC, sessions, replay rejection,
+and duplicate suppression for protocol compatibility. Because its key is
+public, an attacker can calculate valid tags; none of those mechanisms
+authenticate the peer. Open mode is suitable only for isolated testing.
 
 ## Security review gates
 

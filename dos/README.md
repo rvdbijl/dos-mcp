@@ -36,7 +36,7 @@ upcall. Outputs are placed in `dos/build/`:
 - `RAGENT.EXE` — foreground network agent
 - `PROTOCHK.EXE` — DOS protocol golden-vector test
 
-The current build is approximately 27 KB on disk. Runtime conventional-memory
+The current build is approximately 30 KB on disk. Runtime conventional-memory
 use and performance on a physical 4.77 MHz 8088 remain to be measured.
 
 No packet-driver binary is redistributed by this repository. Obtain a
@@ -50,23 +50,24 @@ supported.
 
 ## Run on DOS
 
-Load the adapter driver, then pass a unique 128-bit hexadecimal key:
+Load the adapter driver, then pass a unique high-entropy password:
 
 ```dos
 NE2000 0x60 10 0x300
-RAGENT 8D6A33C8B7A0521DFEF7926C44819A20 10.0.2.15 21300 0x60
+RAGENT pass:MyUniqueLabPassphrase 10.0.2.15 21300 0x60
 ```
 
 Arguments:
 
 ```text
-RAGENT keyhex [local-ip] [udp-port] [packet-driver-interrupt]
+RAGENT [credential] [local-ip] [udp-port] [packet-driver-interrupt]
 ```
 
 Defaults:
 
 | Value | Default |
 |---|---|
+| Credential | Open mode |
 | Local IP | `10.0.2.15` |
 | UDP port | 21300 |
 | Packet-driver interrupt | `60h` |
@@ -75,11 +76,27 @@ Defaults:
 address on the DOS machine's network. `RAGENT` does not configure the
 adapter's IRQ or I/O base—those belong to the packet-driver command line.
 
+`pass:text` derives a 128-bit key from the password. `key:32hex` forces a raw
+key; a bare 32-hex value keeps the original raw-key syntax; any other
+nonempty bare value is treated as a password. Use `-` when you want open mode
+but still need to specify the later network arguments:
+
+```dos
+RAGENT - 10.0.2.15 21300 0x60
+```
+
+With no arguments, `RAGENT` also starts in open mode using all network
+defaults. It prints a warning because open mode is unauthenticated and any
+reachable peer can control the shell. DOS normally limits the complete
+command tail to 127 bytes; use a no-space printable-ASCII passphrase that
+fits that limit for portable matching with the modern host.
+
 The startup display should include:
 
 ```text
 Retro DOS Agent 0.1 - <ip>:<port>
-Authenticated UDP ready. EXIT or local Ctrl-Alt-Esc stops.
+Authenticated UDP ready.
+EXIT or local Ctrl-Alt-Esc stops.
 RAGENT>
 ```
 
@@ -87,9 +104,12 @@ The modern bridge targets the address with the same key:
 
 ```bash
 DOS_MCP_TARGET=192.168.10.55:21300 \
-DOS_MCP_KEY=8D6A33C8B7A0521DFEF7926C44819A20 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
 uv run dos-mcp
 ```
+
+The bridge also supports `DOS_MCP_KEY` for a raw key. Omit both credential
+variables to match DOS open mode.
 
 `EXIT` stops the foreground shell. Holding Ctrl+Alt while pressing Esc is
 the local emergency stop.
@@ -146,7 +166,8 @@ verifies the captured result.
 
 The profile in `dosbox-x.conf` mounts the build directory as `C:`, runs
 `PROTOCHK`, loads NE2000 at I/O `300h`/IRQ 10/interrupt `60h`, and starts
-`RAGENT` at `10.0.2.15:21300`. Its fixed key and MAC address are test values.
+`RAGENT` at `10.0.2.15:21300`. Its fixed `dosbox-test` password and MAC
+address are public test values.
 
 ## Real-hardware bring-up
 
@@ -156,7 +177,8 @@ Suggested order:
 2. record free conventional memory;
 3. load the adapter's packet driver and verify its reported MAC, IRQ, I/O
    base, and software interrupt;
-4. choose an unused static IP and a unique random key;
+4. choose an unused static IP and a unique high-entropy passphrase or random
+   key;
 5. start `RAGENT`;
 6. query status and capabilities from the bridge;
 7. capture the prompt before sending input;

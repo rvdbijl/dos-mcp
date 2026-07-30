@@ -55,6 +55,13 @@ typedef struct dm_packet {
 } dm_packet;
 
 dm_u16 dm_crc16_ccitt(const dm_u8 *data, dm_u16 length);
+void dm_sha256(const dm_u8 *data, dm_u16 length, dm_u8 output[32]);
+void dm_derive_password_key(
+    const dm_u8 *password,
+    dm_u16 length,
+    dm_u8 output[16]
+);
+void dm_open_mode_key(dm_u8 output[16]);
 void dm_xtea_encrypt(dm_u8 block[8], const dm_u8 key[16]);
 void dm_derive_session_key(
     const dm_u8 key[16],

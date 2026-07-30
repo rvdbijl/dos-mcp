@@ -9,23 +9,30 @@ or use the Python tests to inspect behavior.
 If it exits immediately, run the same command in a terminal and inspect
 stderr.
 
-## `DOS_MCP_KEY is required with DOS_MCP_TARGET`
+## The bridge warns about unauthenticated open mode
 
-UDP mode requires both variables:
+`DOS_MCP_TARGET` now works without a credential, but that deliberately selects
+open mode. Configure the same password on both peers to authenticate them:
 
 ```bash
 DOS_MCP_TARGET=127.0.0.1:21300 \
-DOS_MCP_KEY=00112233445566778899AABBCCDDEEFF \
+DOS_MCP_PASSWORD='the-same-high-entropy-passphrase' \
 uv run dos-mcp
 ```
 
-The key must match the simulator or DOS agent.
+Or use `DOS_MCP_KEY` with the same raw 32-hex key as the simulator or DOS
+agent. Do not set both variables.
 
-## The key is rejected
+## The credential is rejected
 
-It must contain exactly 32 hexadecimal characters and decode to 16 bytes.
-The all-zero value is forbidden. Remove spaces, `0x`, separators, and shell
-quotes that accidentally become part of the value.
+`DOS_MCP_PASSWORD` must be nonempty. A raw `DOS_MCP_KEY` must contain exactly
+32 hexadecimal characters and decode to 16 nonzero bytes; remove `0x`,
+separators, and accidental whitespace.
+
+On DOS, `pass:` and `key:` force the intended interpretation. A bare
+32-hex-character value is a legacy raw key; every other nonempty bare value
+is a password. Use `-` for explicit open mode when supplying later arguments.
+The whole DOS command tail normally has a 127-byte limit.
 
 ## UDP requests time out
 
@@ -33,14 +40,15 @@ Check, in order:
 
 1. target IP and UDP port;
 2. that the simulator or `RAGENT` is still running;
-3. that the configured keys match;
+3. that both sides use the same credential mode and value;
 4. host firewall rules;
 5. DOSBox-X UDP port-forward initialization;
 6. packet-driver interrupt, IRQ, and I/O address;
 7. duplicate use of host port 21300.
 
-Wrong-key packets are intentionally discarded without an authentication
-oracle, so they look like a timeout.
+Wrong-password and wrong-key packets are intentionally discarded without an
+authentication oracle, so they look like a timeout. Open mode only connects
+to another open-mode peer.
 
 For DOSBox-X, inspect its log for:
 
@@ -66,7 +74,7 @@ For the checked DOSBox-X profile:
 
 ```dos
 NE2000 0x60 10 0x300
-RAGENT <key> 10.0.2.15 21300 0x60
+RAGENT pass:<password> 10.0.2.15 21300 0x60
 ```
 
 Different hardware needs its own driver arguments.

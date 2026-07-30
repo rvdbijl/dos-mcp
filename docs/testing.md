@@ -100,7 +100,7 @@ The harness:
 3. starts DOSBox-X with a deterministic NE2000/SLiRP profile;
 4. runs the protocol vectors inside DOS;
 5. starts the packet driver and foreground agent;
-6. authenticates from the Python UDP backend;
+6. authenticates with a password-derived key from the Python UDP backend;
 7. verifies status and capabilities;
 8. receives a multi-fragment 80×25 VGA snapshot;
 9. sends `VER` and Enter through the BIOS queue;
@@ -110,7 +110,7 @@ The harness:
 Expected terminal output includes:
 
 ```text
-PASS: authenticated UDP, status, capabilities, fragmented VGA text capture, BIOS keys, and VER output
+PASS: password-derived authentication, status, capabilities, fragmented VGA text capture, BIOS keys, and VER output
 ```
 
 The harness uses host UDP port 21300. Stop any process already using that

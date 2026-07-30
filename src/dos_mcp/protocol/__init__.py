@@ -1,4 +1,4 @@
-"""Compact authenticated protocol shared by bridge and DOS agent."""
+"""Compact credentialed/open protocol shared by bridge and DOS agent."""
 
 from .constants import (
     Adapter,
@@ -9,7 +9,13 @@ from .constants import (
     Opcode,
     Phase,
 )
-from .crypto import derive_session_key, parse_key
+from .crypto import (
+    OPEN_MODE_KEY,
+    credential_key,
+    derive_password_key,
+    derive_session_key,
+    parse_key,
+)
 from .messages import (
     CapabilitiesMessage,
     HelloRequest,
@@ -38,6 +44,9 @@ __all__ = [
     "Phase",
     "ScreenMessage",
     "StatusMessage",
+    "OPEN_MODE_KEY",
+    "credential_key",
+    "derive_password_key",
     "derive_session_key",
     "fragment_message",
     "parse_key",
