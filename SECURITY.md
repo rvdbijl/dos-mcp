@@ -33,7 +33,7 @@ disclosure.
 Protocol credentials cannot be revoked remotely. If a password or raw key is
 exposed:
 
-1. stop `RAGENT` or the simulator;
+1. stop `RAGENT`, unload `RA-TSR`, or stop the simulator;
 2. block UDP access to the target;
 3. choose a new high-entropy passphrase or generate a random 16-byte key;
 4. update both target and bridge;
@@ -43,7 +43,7 @@ exposed:
 
 ## Deployment security
 
-Protocol version 1 is for a trusted private LAN. It authenticates and checks
+Protocol version 2 is for a trusted private LAN. It authenticates and checks
 integrity but does not encrypt. Do not:
 
 - forward the agent UDP port from the public Internet;
@@ -59,12 +59,15 @@ See [`docs/security-model.md`](docs/security-model.md) for the design and
 
 The following documented limitations are not by themselves vulnerabilities:
 
-- no confidentiality in protocol version 1;
+- no confidentiality in protocol version 2;
 - no authentication when explicitly running in documented open mode;
 - no service while the foreground DOS agent runs a child command;
 - BIOS keyboard injection not working with direct-controller software;
 - `DOS_MCP_ROOT` being a starting directory rather than containment;
-- unavailable TSR, graphics, filesystem, memory, port, and reboot features.
+- unauthenticated, spoofable local discovery advertisements;
+- documented RA-TSR incompatibility with Windows, protected-mode extenders,
+  direct-input software, or another TSR loaded above its interrupt hooks;
+- unavailable direct execution, memory, port, and reboot features.
 
 Reports showing a bypass of documented authentication, replay protection,
 length checks, capability boundaries, or process isolation are in scope.

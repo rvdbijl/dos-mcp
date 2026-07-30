@@ -13,10 +13,12 @@ Read these before changing code:
 
 ## Scope
 
-The current codebase is the generic foreground MVP. Keep PicoMEM/PicoMEM2
-work out unless a task explicitly opens that milestone. Do not turn the
-foreground agent into a TSR as an incidental refactor; TSR work needs a
-dedicated reentrancy, memory, and hardware-verification design.
+The current codebase includes distinct foreground `RAGENT` and resident
+`RA-TSR` targets. Preserve both paths; do not turn the foreground program
+into a compatibility alias or move DOS work into callbacks. Resident changes
+need explicit reentrancy, memory-lifetime, unload, and hardware-verification
+analysis. Keep PicoMEM/PicoMEM2 work out unless a task explicitly opens that
+milestone.
 
 ## Development setup
 

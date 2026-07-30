@@ -1,4 +1,4 @@
-"""Version-1 datagram encoding, validation, fragmentation, and reassembly."""
+"""Version-2 datagram encoding, validation, fragmentation, and reassembly."""
 
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ class Packet:
     flags: int = 0
 
     def __post_init__(self) -> None:
-        if not 0 <= self.flags <= 0xFF:
-            raise ValueError("flags must fit in one byte")
+        if self.flags != 0:
+            raise ValueError("protocol version 2 defines no packet flags")
         if not 0 <= self.session_id <= 0xFFFF:
             raise ValueError("session_id must fit in two bytes")
         if not 0 <= self.request_id <= 0xFFFF:
@@ -105,9 +105,18 @@ class Packet:
             raise PacketError("invalid packet magic")
         if version != VERSION:
             raise PacketError(f"unsupported protocol version {version}")
+        if flags:
+            raise PacketError("unknown packet flags")
         if payload_length > MAX_FRAGMENT_PAYLOAD:
             raise PacketError("declared payload exceeds fragment limit")
-        if len(datagram) != HEADER_SIZE + payload_length:
+        packet_length = HEADER_SIZE + payload_length
+        if len(datagram) == packet_length + 1 and datagram[-1] == 0:
+            # Protocol v2 permits one unauthenticated transport pad byte.
+            # Some 16-bit NE2000 packet drivers perform word-wide DMA even
+            # for odd Ethernet frames; modern senders use this byte to keep
+            # requests even-sized without changing the logical packet.
+            datagram = datagram[:packet_length]
+        elif len(datagram) != packet_length:
             raise PacketError("datagram length does not match payload length")
         if not 1 <= fragment_count <= MAX_FRAGMENTS:
             raise PacketError("invalid fragment count")

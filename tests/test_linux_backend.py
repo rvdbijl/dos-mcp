@@ -65,3 +65,46 @@ def test_linux_backend_close_is_idempotent(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="closed"):
         backend.capture_screen()
+
+
+def test_linux_backend_file_policy_and_atomic_round_trip(tmp_path: Path) -> None:
+    backend = LinuxTerminalBackend(
+        root=tmp_path,
+        allow_file_read=True,
+        allow_file_write=True,
+    )
+    content = b"\x00\xffDOS-MCP"
+    try:
+        receipt = backend.upload_file(
+            path="ROUNDTRP.BIN",
+            data=content,
+            overwrite=False,
+        )
+        downloaded = backend.download_file(path="ROUNDTRP.BIN")
+        with pytest.raises(FileExistsError):
+            backend.upload_file(
+                path="ROUNDTRP.BIN",
+                data=b"replacement",
+                overwrite=False,
+            )
+    finally:
+        backend.close()
+
+    assert receipt.size == len(content)
+    assert downloaded.data == content
+    assert not list(tmp_path.glob("DOSMCP-*.TMP"))
+
+
+def test_linux_backend_file_paths_cannot_escape_root(tmp_path: Path) -> None:
+    backend = LinuxTerminalBackend(
+        root=tmp_path,
+        allow_file_read=True,
+        allow_file_write=True,
+    )
+    try:
+        with pytest.raises(ValueError, match="escapes"):
+            backend.download_file(path="../outside")
+        with pytest.raises(ValueError, match="relative"):
+            backend.upload_file(path="/tmp/outside", data=b"x", overwrite=False)
+    finally:
+        backend.close()

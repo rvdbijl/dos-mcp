@@ -20,16 +20,19 @@ compatibility on a 4.77 MHz 8088.
 |---|---|---|
 | Linux PTY | Implemented | Automated tests |
 | Linux UDP simulator | Implemented | Automated loopback UDP tests |
-| DOSBox-X NE2000/SLiRP | Implemented | Repeatable end-to-end harness |
+| DOSBox-X foreground endpoint | Implemented | Repeatable NE2000/SLiRP harness |
+| DOSBox-X resident endpoint | Implemented | Text, VGA 13h, keys, files, unload |
 | Physical 8088 packet-driver machine | Designed, not yet measured here | Requires hardware validation |
-| TSR observation agent | Not implemented | Foreground agent only |
+| Resident `RA-TSR` | Implemented | Emulator verified; physical timing unverified |
 | PicoMEM/PicoMEM2 | Intentionally not implemented | Outside current scope |
 
 ## DOS and CPU
 
-`RAGENT.EXE` is compiled with Open Watcom's `-0` option for 8086/8088
-instruction generation and the small memory model. The protocol vector
-program and network agent run under DOSBox-X's DOS environment.
+`RAGENT.EXE`, `RA-TSR.EXE`, and their assembly hooks are built for the
+8086/8088 instruction set. `RA-TSR` uses a private resident stack and retains
+its PSP-owned allocation. The same binaries can run in real mode on later
+286-through-486 CPUs; this is an instruction-set claim, not a claim about
+every BIOS, packet driver, or application.
 
 | Platform | Status |
 |---|---|
@@ -39,11 +42,12 @@ program and network agent run under DOSBox-X's DOS environment.
 | MS-DOS 5.x/6.x on hardware | Not yet verified |
 | PC DOS / DR-DOS | Not yet verified |
 | FreeDOS | Not yet verified |
-| 286/386+ real mode | Expected but not yet catalogued |
+| 286/386/486 real mode | Compatible build target; not yet catalogued on hardware |
+| Windows DOS boxes / protected mode | Not supported by RA-TSR |
 
-The foreground binary is roughly 30 KB on disk in the current build.
-Runtime conventional-memory use has not yet been measured on physical
-hardware.
+Runtime conventional-memory use and worst-case interrupt latency have not yet
+been measured on physical hardware. The resident build deliberately retains
+128 KiB for code, data, transfer buffers, and its private stack.
 
 ## Ethernet and packet drivers
 
@@ -77,13 +81,21 @@ modern bridge relies on authenticated retries.
 | 80×25 CGA text | Implemented fallback/copy path | Not independently verified |
 | 80×25 MDA text, mode 7 | Implemented memory selection | Not independently verified |
 | Other text dimensions | Capped/not fully supported | Future work |
-| CGA graphics | Not implemented | Planned |
-| Hercules graphics | Not implemented | Planned |
-| EGA/VGA graphics | Not implemented | Planned |
+| CGA modes 4/5, 320×200×2bpp | Implemented raw 16 KiB capture | Not independently verified |
+| CGA mode 6, 640×200×1bpp | Implemented raw 16 KiB capture | Not independently verified |
+| Hercules, 720×348×1bpp | Implemented raw 32 KiB capture | Not independently verified |
+| EGA modes 0Dh/0Eh/0Fh/10h | Implemented plane-major capture | Not independently verified |
+| VGA modes 11h/12h | Implemented plane-major capture | Not independently verified |
+| VGA mode 13h, 320×200×8bpp | Implemented raw 64,000-byte capture | DOSBox-X E2E |
 
 The agent reads BIOS Data Area metadata and uses BIOS display-combination
 information when available. It returns raw CP437 character bytes and
-attribute bytes; rendering remains a modern-host responsibility.
+attribute bytes for text. Graphics results are raw adapter-memory layouts;
+palette interpretation and rendering remain modern-host responsibilities.
+
+Graphics register accesses are bracketed and restored. Emulator verification
+does not establish that every clone adapter tolerates capture while a
+timing-sensitive game is running.
 
 ## Keyboard
 
@@ -96,6 +108,19 @@ Enhanced F11/F12 BIOS words may not be understood by early BIOS
 implementations. Printable text, Enter, Escape, Tab, Backspace, arrows,
 navigation keys, F1–F10, Ctrl-C, and Ctrl-D still require representative
 hardware testing.
+
+## Files and discovery
+
+`RA-TSR` implements bounded sequential files relative to one existing DOS
+root. Read and write policy is selected at load time; writes use a temporary
+file, CRC-32 verification, and rename-on-commit. The DOSBox-X test verifies a
+2,560-byte binary round trip. FAT variants, sharing software, and network
+redirectors remain unverified.
+
+While it has no active bridge session, `RA-TSR` broadcasts a named discovery
+advertisement at TTL 1 approximately every five seconds. Receipt has unit
+coverage on Linux; DOSBox-X SLiRP is not evidence that physical switches,
+routers, or packet drivers pass limited broadcast correctly.
 
 ## Recording new verification
 

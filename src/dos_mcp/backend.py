@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .models import Capabilities, KeyReceipt, MachineStatus, TextScreen
+from .models import (
+    Capabilities,
+    FileContents,
+    FileReceipt,
+    GraphicsScreen,
+    KeyReceipt,
+    MachineStatus,
+    TextScreen,
+)
 
 
 class Backend(Protocol):
@@ -16,6 +24,8 @@ class Backend(Protocol):
 
     def capture_screen(self) -> TextScreen: ...
 
+    def capture_graphics(self) -> GraphicsScreen: ...
+
     def send_keys(
         self,
         *,
@@ -24,5 +34,15 @@ class Backend(Protocol):
         inter_key_delay_ms: int,
         settle_ms: int,
     ) -> KeyReceipt: ...
+
+    def download_file(self, *, path: str) -> FileContents: ...
+
+    def upload_file(
+        self,
+        *,
+        path: str,
+        data: bytes,
+        overwrite: bool,
+    ) -> FileReceipt: ...
 
     def close(self) -> None: ...

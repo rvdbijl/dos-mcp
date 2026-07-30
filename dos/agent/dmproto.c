@@ -14,15 +14,28 @@ typedef struct dm_sha_context {
 } dm_sha_context;
 
 typedef struct dm_mac_context {
-    dm_u8 state[8];
-    dm_u8 block[8];
+    dm_u8 state[4];
+    dm_u8 block[4];
     dm_u8 used;
     dm_u32 length;
-    const dm_u8 *key;
+    dm_u16 round_keys[22];
 } dm_mac_context;
+
+#ifdef RA_TSR
+/*
+ * The resident worker is serialized by its interrupt hook.  Reuse one bounded
+ * scratch area so large near pointers never refer to the switched ISR stack.
+ */
+static dm_u8 dm_protocol_scratch[DM_HEADER_SIZE + DM_MAX_FRAGMENT_PAYLOAD];
+#endif
 
 static void dm_mac_feed(dm_mac_context *context, dm_u8 value);
 static void dm_mac_block(dm_mac_context *context);
+static void dm_speck32_expand(const dm_u8 key[8], dm_u16 round_keys[22]);
+static void dm_speck32_encrypt(
+    dm_u8 block[4],
+    const dm_u16 round_keys[22]
+);
 static void dm_sha_init(dm_sha_context *context);
 static void dm_sha_update(
     dm_sha_context *context,
@@ -157,10 +170,10 @@ dm_u32 dm_packet_mac(const dm_u8 *data, dm_u16 length, const dm_u8 key[16])
 {
     dm_mac_context context;
     dm_u16 index;
-    dm_u8 length_block[8];
+    dm_u8 length_block[4];
 
     memset(&context, 0, sizeof(context));
-    context.key = key;
+    dm_speck32_expand(key, context.round_keys);
     context.length = length;
     for (index = 0; index < length; ++index)
         dm_mac_feed(&context, data[index]);
@@ -168,10 +181,11 @@ dm_u32 dm_packet_mac(const dm_u8 *data, dm_u16 length, const dm_u8 key[16])
     while (context.used != 0)
         dm_mac_feed(&context, 0);
     dm_put_u32(length_block, length);
-    dm_put_u32(length_block + 4, ((dm_u32)length) ^ 0xFFFFFFFFUL);
-    for (index = 0; index < 8; ++index)
+    for (index = 0; index < 4; ++index)
         dm_mac_feed(&context, length_block[index]);
-    return dm_get_u32(context.state) ^ dm_get_u32(context.state + 4);
+    dm_speck32_expand(key + 8, context.round_keys);
+    dm_speck32_encrypt(context.state, context.round_keys);
+    return dm_get_u32(context.state);
 }
 
 int dm_packet_encode(
@@ -185,10 +199,16 @@ int dm_packet_encode(
     dm_u16 total;
     dm_u16 crc;
     dm_u32 mac;
+#ifdef RA_TSR
+    dm_u8 *scratch = dm_protocol_scratch;
+#else
     dm_u8 scratch[16 + DM_MAX_FRAGMENT_PAYLOAD];
+#endif
 
+    if (packet->flags != 0)
+        return DM_ERR_ENUM;
     if (packet->kind < DM_KIND_REQUEST || packet->kind > DM_KIND_ERROR
-        || packet->opcode < DM_OP_HELLO || packet->opcode > DM_OP_CANCEL)
+        || packet->opcode < DM_OP_HELLO || packet->opcode > DM_OP_MAX)
         return DM_ERR_ENUM;
     if (packet->fragment_count == 0
         || packet->fragment_count > DM_MAX_FRAGMENTS
@@ -235,7 +255,11 @@ int dm_packet_decode(
     dm_u16 payload_length;
     dm_u16 expected_crc;
     dm_u32 expected_mac;
+#ifdef RA_TSR
+    dm_u8 *scratch = dm_protocol_scratch;
+#else
     dm_u8 scratch[DM_HEADER_SIZE + DM_MAX_FRAGMENT_PAYLOAD];
+#endif
 
     if (datagram_length < DM_HEADER_SIZE)
         return DM_ERR_TRUNCATED;
@@ -243,12 +267,16 @@ int dm_packet_decode(
         return DM_ERR_MAGIC;
     if (datagram[2] != DM_VERSION)
         return DM_ERR_VERSION;
+    if (datagram[5] != 0)
+        return DM_ERR_ENUM;
     if (datagram[3] < DM_KIND_REQUEST || datagram[3] > DM_KIND_ERROR
-        || datagram[4] < DM_OP_HELLO || datagram[4] > DM_OP_CANCEL)
+        || datagram[4] < DM_OP_HELLO || datagram[4] > DM_OP_MAX)
         return DM_ERR_ENUM;
     payload_length = dm_get_u16(datagram + 12);
     if (payload_length > DM_MAX_FRAGMENT_PAYLOAD
-        || datagram_length != DM_HEADER_SIZE + payload_length)
+        || (datagram_length != DM_HEADER_SIZE + payload_length
+            && (datagram_length != DM_HEADER_SIZE + payload_length + 1
+                || datagram[datagram_length - 1] != 0)))
         return DM_ERR_LENGTH;
     if (datagram[11] == 0 || datagram[11] > DM_MAX_FRAGMENTS
         || datagram[10] >= datagram[11])
@@ -280,7 +308,7 @@ int dm_packet_decode(
 static void dm_mac_feed(dm_mac_context *context, dm_u8 value)
 {
     context->block[context->used++] = value;
-    if (context->used == 8)
+    if (context->used == 4)
         dm_mac_block(context);
 }
 
@@ -288,10 +316,56 @@ static void dm_mac_block(dm_mac_context *context)
 {
     dm_u8 index;
 
-    for (index = 0; index < 8; ++index)
+    for (index = 0; index < 4; ++index)
         context->state[index] ^= context->block[index];
-    dm_xtea_encrypt(context->state, context->key);
+    dm_speck32_encrypt(context->state, context->round_keys);
     context->used = 0;
+}
+
+static void dm_speck32_expand(const dm_u8 key[8], dm_u16 round_keys[22])
+{
+    dm_u16 round_key = dm_get_u16(key);
+    dm_u16 schedule[3];
+    dm_u16 next_word;
+    dm_u8 round;
+    dm_u8 slot = 0;
+
+    schedule[0] = dm_get_u16(key + 2);
+    schedule[1] = dm_get_u16(key + 4);
+    schedule[2] = dm_get_u16(key + 6);
+    round_keys[0] = round_key;
+    for (round = 0; round < 21; ++round) {
+        next_word = (dm_u16)(
+            (dm_u16)((schedule[slot] >> 7) | (schedule[slot] << 9))
+            + round_key
+        );
+        next_word ^= round;
+        schedule[slot] = next_word;
+        if (++slot == 3)
+            slot = 0;
+        round_key = (dm_u16)((round_key << 2) | (round_key >> 14));
+        round_key ^= next_word;
+        round_keys[round + 1] = round_key;
+    }
+}
+
+static void dm_speck32_encrypt(
+    dm_u8 block[4],
+    const dm_u16 round_keys[22]
+)
+{
+    dm_u16 left = dm_get_u16(block);
+    dm_u16 right = dm_get_u16(block + 2);
+    dm_u8 round;
+
+    for (round = 0; round < 22; ++round) {
+        left = (dm_u16)((dm_u16)((left >> 7) | (left << 9)) + right);
+        left ^= round_keys[round];
+        right = (dm_u16)((right << 2) | (right >> 14));
+        right ^= left;
+    }
+    dm_put_u16(block, left);
+    dm_put_u16(block + 2, right);
 }
 
 static void dm_sha_init(dm_sha_context *context)

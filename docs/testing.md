@@ -12,7 +12,8 @@ driver. Most development needs only the first two layers.
 | Python behavior | `uv run pytest` | Loopback sockets for UDP tests |
 | Native C vectors | command below | Host C89 compiler |
 | DOS build | `make -C dos WATCOM=/path/to/watcom all` | Open Watcom 2 |
-| In-DOS vectors and network E2E | `tools/test_dosbox_x.sh` | Open Watcom, DOSBox-X, packet driver |
+| Foreground DOS network E2E | `tools/test_dosbox_x.sh` | Open Watcom, DOSBox-X, packet driver |
+| Resident DOS network E2E | `tools/test_dosbox_x_tsr.sh` | Open Watcom, DOSBox-X, packet driver |
 
 ## Python suite
 
@@ -28,11 +29,11 @@ The tests cover:
 - terminal dimensions, scrolling, cursor movement, and text attributes;
 - Linux backend startup, key input, validation, and idempotent shutdown;
 - MCP tool registration, annotations, argument preservation, and results;
-- CRC16, XTEA, session-key, and packet-MAC vectors;
+- CRC16, XTEA session-key, Speck packet-MAC, and discovery vectors;
 - packet truncation, corruption, fragmentation, and reassembly;
 - payload codec validation;
 - UDP authentication, retries, fragmented screens, duplicate suppression,
-  and wrong-key timeout.
+  file/graphics transactions, multi-target routing, and wrong-key timeout.
 
 ## Native C89 vectors
 
@@ -66,6 +67,8 @@ Expected outputs in `dos/build/`:
 
 - `PROTOCHK.EXE`
 - `RAGENT.EXE`
+- `RA-TSR.EXE`
+- `TSRHOST.EXE` (test-only foreground fixture)
 
 The Makefile selects 8086/8088 code generation, the small memory model,
 size optimization, stack checks off, and warnings as errors. The packet
@@ -116,6 +119,39 @@ PASS: password-derived authentication, status, capabilities, fragmented VGA text
 The harness uses host UDP port 21300. Stop any process already using that
 port before running it.
 
+## DOSBox-X resident end-to-end test
+
+```bash
+WATCOM=/path/to/watcom \
+DOSBOX_X=/path/to/dosbox-x \
+PACKET_DRIVER=/path/to/NE2000.COM \
+tools/test_dosbox_x_tsr.sh
+```
+
+The resident harness:
+
+1. runs `PROTOCHK.EXE` under DOS;
+2. loads RA-TSR with a password, file root, and `RW` policy;
+3. keeps deterministic timer progress and issues DOS-idle interrupts in the
+   test-only `TSRHOST.EXE`;
+4. verifies status, capabilities, empty keys, and 32/256-byte packets;
+5. streams and validates a real 80×25 text screen;
+6. inserts `VER` through the BIOS ring and recaptures output;
+7. switches to VGA mode 13h and fills all 64,000 bytes with a pattern;
+8. downloads the raw graphics transfer and compares every byte;
+9. uploads/downloads 2,560 binary bytes and verifies the round trip;
+10. exits the fixture and verifies `RA-TSR /U` restored vectors/freed memory.
+
+Expected output:
+
+```text
+PASS: resident status, text/VGA capture, BIOS keys, binary upload/download, and unload
+```
+
+The configuration uses `cycles=12000`, Open Watcom `-0`, and one paced
+256-byte response fragment per resident worker entry. This validates the
+emulated 8086 instruction path but is not a physical 4.77 MHz timing claim.
+
 ## What remains hardware-only
 
 DOSBox-X verifies the software path, not physical timing or compatibility.
@@ -124,11 +160,11 @@ hardware:
 
 - executable and runtime conventional-memory use;
 - receive callback duration;
-- XTEA-MAC request cost;
-- 4 KB screen-copy time;
+- Speck-MAC request/response cost;
+- paced text-capture time and timer jitter;
 - loss and retry behavior under adapter load;
 - BIOS queue behavior;
-- CGA/MDA mode and cursor detection.
+- CGA/MDA/Hercules/EGA/planar-VGA modes and register restoration.
 
 Record results in [Hardware support](hardware-support.md) and unresolved
 items in [Roadmap](roadmap.md).

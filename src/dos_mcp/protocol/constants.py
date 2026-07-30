@@ -1,9 +1,9 @@
-"""Wire constants. Numeric values are part of protocol version 1."""
+"""Wire constants. Numeric values are part of protocol version 2."""
 
 from enum import IntEnum, IntFlag
 
 MAGIC = b"DM"
-VERSION = 1
+VERSION = 2
 DEFAULT_PORT = 21300
 MAX_DATAGRAM = 1200
 MAX_FRAGMENT_PAYLOAD = 1024
@@ -25,6 +25,16 @@ class Opcode(IntEnum):
     SEND_KEYS = 5
     PING = 6
     CANCEL = 7
+    FILE_READ_BEGIN = 8
+    FILE_READ_BLOCK = 9
+    FILE_READ_END = 10
+    FILE_WRITE_BEGIN = 11
+    FILE_WRITE_BLOCK = 12
+    FILE_WRITE_COMMIT = 13
+    FILE_ABORT = 14
+    GRAPHICS_BEGIN = 15
+    GRAPHICS_BLOCK = 16
+    GRAPHICS_END = 17
 
 
 class ErrorCode(IntEnum):
@@ -54,6 +64,7 @@ class Capability(IntFlag):
     PORT_READ = 1 << 8
     PORT_WRITE = 1 << 9
     REBOOT = 1 << 10
+    GRAPHICS_CAPTURE = 1 << 11
 
 
 class Phase(IntEnum):
@@ -73,6 +84,15 @@ class Adapter(IntEnum):
     EGA = 3
     VGA = 4
     LINUX_PTY = 254
+
+
+class GraphicsLayout(IntEnum):
+    CGA_2BPP_INTERLEAVED = 1
+    CGA_1BPP_INTERLEAVED = 2
+    HERCULES_1BPP_INTERLEAVED = 3
+    PLANAR_4BPP = 4
+    PLANAR_1BPP = 5
+    PACKED_8BPP = 6
 
 
 class KeyCode(IntEnum):

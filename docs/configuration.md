@@ -1,68 +1,83 @@
 # Configuration reference
 
-The MCP bridge uses environment variables. The UDP simulator and foreground
-DOS agent use command-line arguments.
-
 ## Bridge environment
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOS_MCP_TARGET` | unset | Selects UDP when set; value is `host` or `host:port` |
-| `DOS_MCP_PASSWORD` | unset | Passphrase used to derive the 128-bit protocol key |
-| `DOS_MCP_KEY` | unset | Raw 128-bit protocol key as 32 hexadecimal characters |
-| `DOS_MCP_ROOT` | current directory | Linux backend starting directory |
-| `DOS_MCP_SHELL` | `/bin/sh` | Absolute path to the Linux backend shell |
+| `DOS_MCP_TARGET` | unset | one UDP endpoint, `host` or `host:port` |
+| `DOS_MCP_TARGETS` | unset | JSON object of selector to `host[:port]` |
+| `DOS_MCP_DISCOVERY` | `0` | set `1` to listen for RA-TSR announcements |
+| `DOS_MCP_DISCOVERY_PORT` | `21301` | local announcement listener port |
+| `DOS_MCP_PASSWORD` | unset | passphrase for all UDP targets in this process |
+| `DOS_MCP_KEY` | unset | raw 128-bit key as 32 hexadecimal characters |
+| `DOS_MCP_ALLOW_FILE_READ` | `0` | permit backend download operations |
+| `DOS_MCP_ALLOW_FILE_WRITE` | `0` | permit backend upload operations |
+| `DOS_MCP_ROOT` | current directory | Linux backend root/starting directory |
+| `DOS_MCP_SHELL` | `/bin/sh` | Linux backend shell |
 
-Backend selection is exclusive:
+`DOS_MCP_TARGET` and `DOS_MCP_TARGETS` are mutually exclusive.
+`DOS_MCP_TARGETS` and discovery may be combined. If none of the three UDP
+selection modes is enabled, the bridge uses `LinuxTerminalBackend`.
 
-- with no `DOS_MCP_TARGET`, the bridge creates `LinuxTerminalBackend`;
-- with `DOS_MCP_TARGET`, it creates `UdpBackend`;
-- set either `DOS_MCP_PASSWORD` or `DOS_MCP_KEY`, never both;
-- if neither credential variable is set, UDP uses unauthenticated open mode
-  and writes a warning to stderr.
-
-The default UDP port is 21300.
+Boolean variables accept only `0`, `1`, or unset.
 
 Examples:
 
 ```bash
-# Local backend
+# Local Linux development target
 DOS_MCP_ROOT=/srv/dos-work DOS_MCP_SHELL=/bin/bash uv run dos-mcp
 
-# UDP target using the default port
+# One DOS/simulator target
 DOS_MCP_TARGET=192.168.10.55 \
-DOS_MCP_PASSWORD='MyUniqueLabPassphrase' \
+DOS_MCP_PASSWORD='UniqueLabPass' \
 uv run dos-mcp
 
-# UDP target using an explicit port and legacy raw key
-DOS_MCP_TARGET=127.0.0.1:22130 \
-DOS_MCP_KEY=00112233445566778899AABBCCDDEEFF \
+# Named static targets
+DOS_MCP_TARGETS='{"desk8088":"192.168.10.21","lab386":"192.168.10.38:22300"}' \
+DOS_MCP_PASSWORD='shared-lab-test-pass' \
+uv run dos-mcp
+
+# Dynamic resident targets
+DOS_MCP_DISCOVERY=1 \
+DOS_MCP_PASSWORD='shared-lab-test-pass' \
+uv run dos-mcp
+
+# Static plus dynamic, with file operations allowed at the bridge
+DOS_MCP_TARGETS='{"bench":"192.168.10.20"}' \
+DOS_MCP_DISCOVERY=1 \
+DOS_MCP_PASSWORD='shared-lab-test-pass' \
+DOS_MCP_ALLOW_FILE_READ=1 \
+DOS_MCP_ALLOW_FILE_WRITE=1 \
 uv run dos-mcp
 ```
 
-## Credential modes
+The bridge currently resolves one credential for all UDP records. Prefer
+unique target credentials by running separate bridge processes until
+per-target secret-provider support exists.
 
-The password form is the most convenient. SHA-256 hashes a domain separator
-and the UTF-8 password, and the protocol uses the first 16 bytes. This is a
-cross-platform key derivation, not a deliberately slow password hash: use a
-long, high-entropy passphrase rather than a dictionary word. No password is
-sent over the network.
+## Credentials
 
-Raw-key mode remains available. The key must be exactly 16 nonzero bytes
-encoded as 32 hexadecimal characters. Generate one with:
+Set exactly one of `DOS_MCP_PASSWORD` and `DOS_MCP_KEY`.
+
+Password mode computes:
+
+```text
+SHA-256("DOS-MCP credential v1" || NUL || UTF-8(password))[0:16]
+```
+
+It accepts any nonempty environment value. This is a compatibility derivation
+that 16-bit DOS can reproduce, not a slow password hash. Use a long generated
+passphrase.
+
+Raw-key mode requires exactly 32 hexadecimal characters and rejects the
+all-zero key. Generate:
 
 ```bash
 openssl rand -hex 16
 ```
 
-Open mode uses a fixed public protocol key so framing, integrity checks,
-sessions, replay handling, and retries continue to operate. It provides no
-authentication: any peer that can reach the UDP port can forge control
-traffic. Use it only for isolated local testing.
-
-Provision the same mode and credential on both peers. Treat passwords and raw
-keys as secrets: do not put production credentials in the repository,
-screenshots, command history, shared shell scripts, or MCP prompts.
+If neither variable is set for UDP, the bridge logs a warning and uses
+unauthenticated open mode. Open mode is only for isolated testing.
 
 ## UDP simulator
 
@@ -72,19 +87,12 @@ dos-mcp-simulator
   [--bind HOST:PORT]
   [--root DIRECTORY]
   [--shell ABSOLUTE_PATH]
+  [--allow-file-read]
+  [--allow-file-write]
 ```
 
-| Argument | Default | Meaning |
-|---|---|---|
-| `--password` | unset | Passphrase used to derive the protocol key |
-| `--key` | unset | Raw 32-hex protocol key |
-| `--bind` | `127.0.0.1:21300` | UDP listen address |
-| `--root` | current directory | Simulated target shell directory |
-| `--shell` | `/bin/sh` | Simulated target shell |
-
-The credential options are mutually exclusive. With neither, the simulator
-uses open mode and logs a warning to stderr. It closes its PTY child when it
-receives SIGINT or SIGTERM.
+Default bind is `127.0.0.1:21300`. File permissions must also be enabled on
+the connecting bridge.
 
 ## Foreground DOS agent
 
@@ -92,59 +100,56 @@ receives SIGINT or SIGTERM.
 RAGENT [credential] [local-ip] [udp-port] [packet-driver-interrupt]
 ```
 
-| Argument | Default | Meaning |
-|---|---|---|
-| `credential` | open mode | Password, raw key, or `-` for explicit open mode |
-| `local-ip` | `10.0.2.15` | Static IPv4 address claimed by the agent |
-| `udp-port` | `21300` | Application UDP destination port |
-| `packet-driver-interrupt` | `0x60` | Installed packet-driver software interrupt |
+Defaults: open mode, `10.0.2.15`, 21300, `0x60`.
 
-The packet driver itself must already be loaded with the adapter's correct
-I/O address and IRQ. `RAGENT` does not configure the Ethernet hardware.
+## Resident DOS agent
 
-Credential forms:
+```text
+RA-TSR [credential] [local-ip] [port] [packet-int] [root] [access] [name]
+```
+
+| Argument | Default |
+|---|---|
+| credential | open mode |
+| local IP | `10.0.2.15` |
+| operation port | `21300` |
+| packet interrupt | `0x60` |
+| existing file root | `C:\RATSR` |
+| file access | `-` |
+| discovery name | `DOS-PC` |
+
+Access values are `-`, `R`, `W`, and `RW`. Name is 1–31 visible ASCII bytes
+without spaces. Discovery sends to UDP 21301 at build-time default.
+
+Credential forms on DOS:
 
 | Form | Meaning |
 |---|---|
-| `pass:text` | Derive a key from `text`; this also forces password treatment for 32 hex-looking characters |
-| `key:32hex` | Explicit raw key |
-| bare 32-hex value | Legacy raw key |
-| any other bare nonempty value | Password |
-| omitted or `-` | Unauthenticated open mode |
+| `pass:text` | force passphrase interpretation |
+| `key:32hex` | force raw-key interpretation |
+| bare 32 hex | legacy raw key |
+| other bare nonempty text | passphrase |
+| omitted or `-` | open mode |
 
-DOS command tails have a platform limit (normally 127 bytes), so the DOS-side
-passphrase has no fixed protocol length but must fit that command line.
-Printable ASCII without spaces is the most portable choice across DOS shells
-and the modern host.
+## DOSBox-X profiles
 
-## DOSBox-X test configuration
+`dos/dosbox-x.conf` tests foreground RAGENT. `dos/dosbox-x-tsr.conf` tests
+RA-TSR with:
 
-[`dos/dosbox-x.conf`](../dos/dosbox-x.conf) is a deterministic test profile:
+- NE2000 I/O `300h`, IRQ 10, packet interrupt `60h`;
+- SLiRP guest IP `10.0.2.15`;
+- fixed public test password `dosbox-test`;
+- resident root `C:\REMOTE`, access `RW`;
+- deterministic `TSRHOST.EXE`.
 
-| Setting | Value |
-|---|---|
-| Adapter | NE2000 |
-| I/O base | `300h` |
-| IRQ | 10 |
-| MAC | `AC:DE:48:44:4D:01` |
-| Backend | SLiRP |
-| Guest IP | `10.0.2.15` |
-| Host/guest UDP forward | 21300 |
-| Packet-driver interrupt | `60h` |
-
-The checked-in `dosbox-test` password is public test data and must never be
-treated as a deployment secret.
-
-The harness accepts:
+Harness variables:
 
 | Variable | Meaning |
 |---|---|
-| `WATCOM` | Open Watcom installation root |
+| `WATCOM` | Open Watcom root |
 | `DOSBOX_X` | DOSBox-X executable |
-| `DOSBOX_LIBDIR` | Optional directory for unpacked shared libraries |
-| `PACKET_DRIVER` | Path to a compatible `NE2000.COM` |
-| `UV_CACHE_DIR` | Optional uv cache location |
-| `SDL_VIDEODRIVER` | Defaults to `dummy` in the harness |
-| `SDL_AUDIODRIVER` | Defaults to `dummy` in the harness |
-
-See [Testing](testing.md) for the complete command.
+| `DOSBOX_LIBDIR` | optional shared-library directory |
+| `PACKET_DRIVER` | external compatible `NE2000.COM` |
+| `UV_CACHE_DIR` | optional uv cache |
+| `SDL_VIDEODRIVER` | defaults to `dummy` |
+| `SDL_AUDIODRIVER` | defaults to `dummy` |

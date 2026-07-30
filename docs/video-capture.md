@@ -1,64 +1,135 @@
 # Video capture
 
-## Modern representation
+## Text representation
 
-The bridge normalizes a text capture as:
+The bridge returns:
 
-- adapter and BIOS mode when applicable;
-- columns, rows, and active page;
-- one fixed-width string per row;
+- adapter, BIOS mode, active page, dimensions, and code page;
+- one fixed-width Unicode row per screen row;
 - one attribute byte per cell;
-- cursor row, column, visibility, and shape;
-- code page;
-- blink/intensity state;
-- monotonically increasing screen generation.
+- cursor position, visibility/shape, and generation.
 
-Rows retain trailing spaces so cell coordinates remain stable. Text and attributes are separate: characters alone are not a lossless DOS screen.
+Rows retain trailing spaces. Text and attributes remain separate because
+characters alone are not a lossless DOS screen.
 
-The Linux development backend uses Unicode/UTF-8 and marks itself accordingly. It validates the representation and MCP flow but is not a CP437 or BIOS-video fidelity test.
+RAGENT copies the active text page in foreground context. RA-TSR snapshots BDA
+metadata and reads VRAM into paced 256-byte response fragments. It uses the
+install-time adapter classification, avoiding a video-BIOS call from the
+timer worker. Mode 7 maps to `B000h`; other standard text modes map to
+`B800h` plus the BDA active-page offset.
 
-## DOS text capture
+The current DOS representation is bounded to at most 80×25. Cursor and active
+page values are validated by the Python message/domain model before MCP
+results are returned.
 
-Identify mode, adapter, page, dimensions, and framebuffer address before reading. Do not assume `B800:0000`; monochrome text commonly uses `B000:0000`, and active pages change offsets.
+## Raw graphics result
 
-For a typical 80×25 screen, capture 4,000 interleaved character/attribute bytes plus metadata. The bridge converts CP437 bytes to Unicode for structured text and retains original byte/attribute information in the transport/domain model where needed.
+`dos.capture_graphics` returns metadata and strict base64 raw bytes:
 
-The foreground agent implements this 80×25 path. It reads BIOS Data Area
-mode, columns, active-page offset, cursor position, and cursor shape; uses
-BIOS display-combination function `INT 10h AX=1A00h` when available to
-distinguish EGA/VGA; selects `B000h` for mode 7 and `B800h` otherwise; and
-copies interleaved cells into a bounded response. DOSBox-X verifies the VGA
-case. MDA/CGA behavior still needs physical or additional emulator fixtures.
+```text
+adapter, BIOS mode, layout
+width, height, plane count
+bytes per plane, total size, CRC32
+raw framebuffer bytes
+```
 
-## Cursor
+The bridge does not pretend these bytes are a rendered image. Palette/DAC
+capture and PNG rendering remain modern-host follow-up work.
 
-Report position and scanline start/end separately from visibility. Validate the cursor against dimensions, but preserve off-screen or disabled hardware states as explicit metadata rather than silently moving it.
+Only RA-TSR advertises the generic DOS graphics capability. Capture begins
+only in a recognized standard graphics mode and uses an explicit sequential
+block transfer with final size/CRC32 verification.
 
-## Graphics sequence
+## Supported standard modes
 
-Graphics support is deferred in this order:
+| BIOS mode | Adapter family | Dimensions | Layout | Raw bytes |
+|---:|---|---:|---|---:|
+| `04h`, `05h` | CGA | 320×200 | 2-bpp even/odd scanline banks | 16,384 |
+| `06h` | CGA | 640×200 | 1-bpp even/odd scanline banks | 16,384 |
+| `07h` with Hercules graphics enabled | Hercules | 720×348 | 1-bpp four-way interleave | 32,768 |
+| `0Dh` | EGA/VGA | 320×200 | four concatenated planes | 32,000 |
+| `0Eh` | EGA/VGA | 640×200 | four concatenated planes | 64,000 |
+| `0Fh` | EGA/VGA | 640×350 | one planar monochrome plane | 28,000 |
+| `10h` | EGA/VGA | 640×350 | four concatenated planes | 112,000 |
+| `11h` | VGA | 640×480 | one planar monochrome plane | 38,400 |
+| `12h` | VGA | 640×480 | four concatenated planes | 153,600 |
+| `13h` | VGA | 320×200 | packed 8-bpp | 64,000 |
 
-1. CGA 320×200 four-color and 640×200 monochrome;
-2. Hercules 720×348;
-3. EGA planar modes;
-4. VGA planar/packed modes and DAC palette.
+These are raw aperture sizes/layouts, not necessarily the minimum number of
+displayed pixel bytes. CGA/Hercules include bank padding. For planar modes,
+all bytes of plane 0 precede plane 1 and so on.
 
-The DOS agent captures raw memory plus the exact registers needed to reconstruct it. The modern bridge renders images. Any temporarily selected EGA/VGA planes or registers must be restored.
+## CGA
 
-## Change and stability
+Modes 4/5 and 6 use the standard 16 KiB `B800h` aperture. Scanlines alternate
+between the two 8 KiB banks. Consumers reconstruct rows using the layout
+identifier rather than assuming linear pixels. Overscan, composite-artifact
+color, and palette-register interpretation are not captured.
 
-Initial capture is request-driven. A later `wait_for_change` compares generations or capture checksums on the bridge. `wait_for_stable` samples until the screen remains unchanged for a bounded interval. Text matching occurs on the modern bridge after CP437 conversion.
+## Hercules
 
-Packet loss must not create a plausible but corrupted framebuffer. Delta capture may be added only after a complete baseline, generation linkage, and integrity check are defined.
+BIOS mode 7 is also monochrome text, so RA-TSR additionally checks the
+Hercules control port graphics-enable bit before accepting it as graphics.
+The 32 KiB `B000h` aperture uses four scanline banks. Hercules clones with
+different control semantics require hardware-specific verification.
 
-## Fixtures
+## EGA and planar VGA
 
-Required fixtures include:
+The graphics controller's read-map select chooses each plane. For every
+bounded block RA-TSR:
 
-- color and monochrome 80×25 text with cursor variants;
-- every CP437 byte and representative attributes;
-- alternate pages and non-80-column modes;
-- blink versus high-background interpretation;
-- CGA even/odd bank patterns;
-- Hercules four-way interleave;
-- truncated and inconsistent captures rejected by the bridge.
+1. saves the selected graphics-controller index;
+2. selects read-map register 4;
+3. saves the current plane value;
+4. selects the required plane for each logical offset;
+5. reads from `A000h`;
+6. restores plane value and original index.
+
+The output is plane-major. Modes marked planar monochrome expose one plane.
+This preserves the raw representation selected by the current implementation;
+it does not yet include palette registers, attribute-controller state, CRTC
+timing, latches, or nonstandard memory maps.
+
+## VGA mode 13h
+
+Mode 13h reads the linear 64,000-byte `A000h` aperture. The DOSBox-X resident
+integration fills all bytes with a deterministic pattern and verifies exact
+metadata and byte-for-byte recovery through the authenticated multi-block
+protocol. This is the strongest current graphics integration fixture.
+
+## Stability and consistency
+
+Graphics capture is not atomic relative to the running application. A program
+may draw while blocks are read, yielding a temporally torn but
+integrity-correct frame. CRC32 detects transport corruption, not concurrent
+video changes.
+
+Future stable capture can sample generation/checksum state or capture twice
+on the modern host. It must remain bounded and cannot freeze arbitrary games
+from a timer callback.
+
+## Unsupported modes
+
+Capture rejects:
+
+- text modes through the graphics tool;
+- unrecognized BIOS modes;
+- VESA/SVGA banked or linear-framebuffer modes;
+- Mode X and other register-programmed variants of mode 13h;
+- undocumented game/demo layouts;
+- Windows/protected-mode ownership assumptions.
+
+Unsupported mode errors are preferable to returning plausible but wrongly
+interpreted bytes.
+
+## Remaining fixtures
+
+Physical or emulator fixtures are still needed for:
+
+- CGA mode 4/5 palette variants and even/odd bank patterns;
+- CGA mode 6;
+- Hercules four-bank patterns;
+- every EGA/VGA plane with distinct data;
+- mode changes during a transfer;
+- register restoration checks;
+- MDA/color adapter detection on early BIOSes.

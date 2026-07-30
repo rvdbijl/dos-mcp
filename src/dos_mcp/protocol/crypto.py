@@ -1,4 +1,4 @@
-"""XTEA-based packet MAC and session-key derivation.
+"""Lightweight packet authentication and XTEA session-key derivation.
 
 With a secret credential this provides authentication and replay defense, not
 confidentiality. The 32-bit truncated tag is a deliberate first-generation
@@ -14,7 +14,10 @@ import struct
 
 _BLOCK = struct.Struct("<II")
 _KEY = struct.Struct("<IIII")
+_SPECK_BLOCK = struct.Struct("<HH")
+_SPECK_KEY = struct.Struct("<HHHH")
 _MASK = 0xFFFFFFFF
+_MASK16 = 0xFFFF
 _DELTA = 0x9E3779B9
 _PASSWORD_DOMAIN = b"DOS-MCP credential v1\x00"
 _OPEN_MODE_DOMAIN = b"DOS-MCP open mode v1\x00"
@@ -98,19 +101,54 @@ def derive_session_key(key: bytes, client_nonce: int, server_nonce: int) -> byte
     return xtea_encrypt(first, key) + xtea_encrypt(second, key)
 
 
+def _ror16(value: int, count: int) -> int:
+    return ((value >> count) | (value << (16 - count))) & _MASK16
+
+
+def _rol16(value: int, count: int) -> int:
+    return ((value << count) | (value >> (16 - count))) & _MASK16
+
+
+def _speck32_encrypt(block: bytes, key: bytes) -> bytes:
+    """Encrypt one 32-bit block with Speck32/64."""
+    if len(block) != 4 or len(key) != 8:
+        raise ValueError("Speck32/64 requires a 4-byte block and 8-byte key")
+    left, right = _SPECK_BLOCK.unpack(block)
+    round_key, *schedule = _SPECK_KEY.unpack(key)
+    for round_index in range(22):
+        left = ((_ror16(left, 7) + right) & _MASK16) ^ round_key
+        right = _rol16(right, 2) ^ left
+        if round_index != 21:
+            slot = round_index % 3
+            next_word = (
+                (_ror16(schedule[slot], 7) + round_key) & _MASK16
+            ) ^ round_index
+            schedule[slot] = next_word
+            round_key = _rol16(round_key, 2) ^ next_word
+    return _SPECK_BLOCK.pack(left, right)
+
+
 def packet_mac(data: bytes, key: bytes) -> int:
-    """Return a 32-bit XTEA CBC-MAC with length strengthening."""
+    """Return a 32-bit Speck32/64 CBC-MAC with length strengthening.
+
+    Speck32 uses native 16-bit operations on an 8088. The first key half
+    authenticates the CBC chain and the second half finalizes it for domain
+    separation. The protocol's replay/session rules remain separate.
+    """
     if len(key) != 16:
         raise ValueError("packet MAC requires a 16-byte key")
     padded = data + b"\x80"
-    padded += b"\x00" * ((8 - (len(padded) % 8)) % 8)
-    padded += _BLOCK.pack(len(data), len(data) ^ 0xFFFFFFFF)
-    state = b"\x00" * 8
-    for offset in range(0, len(padded), 8):
-        block = bytes(a ^ b for a, b in zip(state, padded[offset : offset + 8], strict=True))
-        state = xtea_encrypt(block, key)
-    left, right = _BLOCK.unpack(state)
-    return (left ^ right) & _MASK
+    padded += b"\x00" * ((4 - (len(padded) % 4)) % 4)
+    padded += struct.pack("<I", len(data))
+    state = b"\x00" * 4
+    for offset in range(0, len(padded), 4):
+        block = bytes(
+            a ^ b
+            for a, b in zip(state, padded[offset : offset + 4], strict=True)
+        )
+        state = _speck32_encrypt(block, key[:8])
+    state = _speck32_encrypt(state, key[8:])
+    return struct.unpack("<I", state)[0]
 
 
 def tags_equal(left: int, right: int) -> bool:

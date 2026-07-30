@@ -1,8 +1,8 @@
 # Operations and safety
 
-The foreground MVP is intended for a trusted operator managing a retro
-machine on a private network. It is not an Internet remote-management
-service.
+The bridge and both DOS agents are intended for a trusted operator managing
+retro machines on a private network. They are not an Internet
+remote-management service.
 
 ## Deployment checklist
 
@@ -13,11 +13,12 @@ Before enabling credentialed UDP control:
 3. place the target and bridge on a trusted private segment;
 4. block the agent UDP port at external routers and host firewalls;
 5. confirm the packet-driver interrupt, IRQ, I/O base, and target IP;
-6. start `RAGENT` locally and verify its visible ready message;
-7. call status and capabilities before sending input;
-8. capture the screen and confirm the expected prompt;
-9. test the local Ctrl+Alt+Esc emergency stop;
-10. keep a local recovery path to the keyboard, emulator, or power control.
+6. start `RAGENT` or visibly load/nickname `RA-TSR`;
+7. call `dos.list_targets`, status, and capabilities before sending input;
+8. use an explicit selector whenever more than one machine is known;
+9. capture the screen and confirm the expected program/prompt;
+10. test local stop or `RA-TSR /U`;
+11. keep a local recovery path to keyboard, emulator, reset, or power.
 
 ## Credential management
 
@@ -50,7 +51,7 @@ Use a different credential for every target. Rotate it when:
 - target ownership changes;
 - an operator who knew the key should no longer have access.
 
-Version 1 has no credential-negotiation or rotation operation. Stop the agent,
+Version 2 has no credential-negotiation or rotation operation. Stop the agent,
 change both configurations, and restart it.
 
 Environment variables can be visible to same-user process inspection on
@@ -65,7 +66,7 @@ startup warning as a deployment failure anywhere else.
 
 ## Network boundary
 
-Protocol version 1 provides:
+Protocol version 2 provides:
 
 - a pre-shared-key authenticated `HELLO`;
 - nonce-derived session keys;
@@ -82,6 +83,10 @@ It does not provide:
 - rate limiting;
 - remote key rotation;
 - multi-controller coordination.
+
+Discovery adds no authentication. It is a TTL-1 local address hint followed
+by the normal credentialed handshake. Treat unexpected names as untrusted and
+block UDP 21301 outside the intended interface.
 
 Screen contents, typed commands, addresses, timing, and packet sizes are
 observable to a network monitor. Use an isolated LAN or an authenticated
@@ -101,7 +106,7 @@ For every mutation:
 Do not blindly replay a series of commands based only on timing. Retro
 machines may show prompts, errors, or modal UI at different speeds.
 
-## Foreground limitations
+## DOS endpoint limitations
 
 `RAGENT` is both network endpoint and foreground shell. A child command
 temporarily prevents network servicing. Prefer short, noninteractive
@@ -114,18 +119,37 @@ commands. Avoid:
 - destructive disk utilities;
 - configuration changes without a bootable recovery disk.
 
-The capability response intentionally reports direct execution, filesystem,
-memory, port, and reboot operations as unavailable.
+The capability response intentionally reports direct execution, memory,
+port, and reboot operations as unavailable. RA-TSR may advertise file and
+graphics capabilities when locally enabled.
+
+For RA-TSR:
+
+- use a dedicated file root, not a system or application directory;
+- enable `R`, `W`, or `RW` only for the required session;
+- require explicit overwrite only after checking the destination;
+- unload before changing packet drivers or rearranging TSR order;
+- expect unsupported direct-input games, protected-mode extenders, and
+  Windows environments to require local operation.
 
 ## Emergency recovery
 
-Normal local stop:
+Normal foreground stop:
 
 ```text
 RAGENT> EXIT
 ```
 
-Emergency local stop: hold Ctrl+Alt and press Esc.
+Emergency foreground stop: hold Ctrl+Alt and press Esc.
+
+Resident stop:
+
+```dos
+RA-TSR /U
+```
+
+If unload reports that another TSR is above it, remove newer TSRs in reverse
+order or reboot normally. Do not force-free the resident block.
 
 Because a foreground child owns the CPU while running, the agent cannot
 process its hotkey until the child returns. Maintain access to emulator stop

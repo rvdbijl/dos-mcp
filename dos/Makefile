@@ -9,9 +9,9 @@ WCL_ENV = WATCOM=$(WATCOM) \
 	EDPATH=$(WATCOM)/eddat \
 	INCLUDE=$(DOS_INCLUDE)
 
-.PHONY: all clean proto-test agent
+.PHONY: all clean proto-test agent tsr tsr-test-host
 
-all: proto-test agent
+all: proto-test agent tsr tsr-test-host
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -29,6 +29,19 @@ agent: $(BUILD)/dmpacket_rx.obj | $(BUILD)
 		-i=include -fe=$(BUILD)/RAGENT.EXE \
 		agent/ragent.c agent/dmproto.c agent/dmpacket.c \
 		$(BUILD)/dmpacket_rx.obj agent/dmnet.c
+
+$(BUILD)/ratsr_hooks.obj: agent/ratsr_hooks.asm | $(BUILD)
+	$(WCL_ENV) $(WASM) -q -fo=$@ $<
+
+tsr: $(BUILD)/dmpacket_rx.obj $(BUILD)/ratsr_hooks.obj | $(BUILD)
+	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx -dRA_TSR \
+		-i=include -fe=$(BUILD)/RA-TSR.EXE \
+		agent/ragent.c agent/dmproto.c agent/dmpacket.c \
+		$(BUILD)/dmpacket_rx.obj $(BUILD)/ratsr_hooks.obj agent/dmnet.c
+
+tsr-test-host: | $(BUILD)
+	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx \
+		-fe=$(BUILD)/TSRHOST.EXE tests/tsr_host.c
 
 clean:
 	rm -f $(BUILD)/*.EXE $(BUILD)/*.obj

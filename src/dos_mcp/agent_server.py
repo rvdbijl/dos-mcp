@@ -6,16 +6,21 @@ import secrets
 import socket
 import struct
 import threading
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .backend import Backend
-from .models import Capabilities, MachineStatus, TextScreen
+from .models import Capabilities, GraphicsScreen, MachineStatus, TextScreen
 from .protocol import (
     Adapter,
     CapabilitiesMessage,
     Capability,
     ErrorCode,
+    FileReadBeginRequest,
+    FileWriteBeginRequest,
+    GraphicsBeginResponse,
+    GraphicsLayout,
     HelloRequest,
     HelloResponse,
     KeyRequest,
@@ -27,6 +32,11 @@ from .protocol import (
     Phase,
     ScreenMessage,
     StatusMessage,
+    TransferBeginResponse,
+    TransferBlockRequest,
+    TransferBlockResponse,
+    TransferEndRequest,
+    TransferEndResponse,
     derive_session_key,
     fragment_message,
     reassemble_packets,
@@ -46,6 +56,19 @@ class _Session:
     last_request_id: int | None = None
     response_cache: dict[int, tuple[bytes, ...]] = field(default_factory=dict)
     pending: dict[int, dict[int, Packet]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _Transfer:
+    transfer_id: int
+    kind: str
+    data: bytearray
+    offset: int = 0
+    crc32: int = 0
+    path: str = ""
+    expected_size: int = 0
+    expected_crc32: int = 0
+    overwrite: bool = False
 
 
 class UdpAgentServer:
@@ -72,6 +95,7 @@ class UdpAgentServer:
         self._closed = False
         self._drop_first_response = drop_first_response
         self._dropped_response = False
+        self._transfer: _Transfer | None = None
 
     @property
     def address(self) -> tuple[str, int]:
@@ -184,6 +208,7 @@ class UdpAgentServer:
             session_id=session_id,
             key=derive_session_key(self.key, request.client_nonce, server_nonce),
         )
+        self._transfer = None
 
     def _dispatch(
         self,
@@ -219,6 +244,69 @@ class UdpAgentServer:
                 ).encode()
             elif opcode is Opcode.PING:
                 response = payload
+            elif opcode is Opcode.FILE_READ_BEGIN:
+                request = FileReadBeginRequest.decode(payload)
+                contents = self.backend.download_file(
+                    path=request.path.decode("cp437")
+                )
+                transfer = self._start_transfer(
+                    "file-read", bytearray(contents.data)
+                )
+                response = TransferBeginResponse(
+                    transfer.transfer_id, len(transfer.data)
+                ).encode()
+            elif opcode is Opcode.FILE_READ_BLOCK:
+                response = self._read_transfer_block(
+                    TransferBlockRequest.decode(payload, has_data=False),
+                    "file-read",
+                )
+            elif opcode is Opcode.FILE_READ_END:
+                response = self._end_read_transfer(
+                    TransferEndRequest.decode(payload), "file-read"
+                )
+            elif opcode is Opcode.FILE_WRITE_BEGIN:
+                request = FileWriteBeginRequest.decode(payload)
+                if request.total_size > 1_048_576:
+                    raise ValueError("upload exceeds simulator size limit")
+                transfer = self._start_transfer("file-write", bytearray())
+                transfer.path = request.path.decode("cp437")
+                transfer.expected_size = request.total_size
+                transfer.expected_crc32 = request.crc32
+                transfer.overwrite = request.overwrite
+                response = TransferBeginResponse(
+                    transfer.transfer_id, request.total_size
+                ).encode()
+            elif opcode is Opcode.FILE_WRITE_BLOCK:
+                response = self._write_transfer_block(
+                    TransferBlockRequest.decode(payload, has_data=True)
+                )
+            elif opcode is Opcode.FILE_WRITE_COMMIT:
+                response = self._commit_write_transfer(
+                    TransferEndRequest.decode(payload)
+                )
+            elif opcode is Opcode.FILE_ABORT:
+                request = TransferEndRequest.decode(payload)
+                if self._transfer and self._transfer.transfer_id == request.transfer_id:
+                    self._transfer = None
+                response = b""
+            elif opcode is Opcode.GRAPHICS_BEGIN:
+                _require_empty(payload)
+                graphics = self.backend.capture_graphics()
+                transfer = self._start_transfer(
+                    "graphics", bytearray(graphics.data)
+                )
+                response = _graphics_begin_message(
+                    graphics, transfer.transfer_id
+                ).encode()
+            elif opcode is Opcode.GRAPHICS_BLOCK:
+                response = self._read_transfer_block(
+                    TransferBlockRequest.decode(payload, has_data=False),
+                    "graphics",
+                )
+            elif opcode is Opcode.GRAPHICS_END:
+                response = self._end_read_transfer(
+                    TransferEndRequest.decode(payload), "graphics"
+                )
             else:
                 self._send_error(
                     session,
@@ -247,6 +335,88 @@ class UdpAgentServer:
             )
             return
         self._send_response(session, opcode, request_id, response)
+
+    def _start_transfer(self, kind: str, data: bytearray) -> _Transfer:
+        if self._transfer is not None:
+            raise RuntimeError("another transfer is active")
+        transfer_id = secrets.randbelow(0xFFFF) or 1
+        self._transfer = _Transfer(transfer_id, kind, data)
+        return self._transfer
+
+    def _require_transfer(self, transfer_id: int, kind: str) -> _Transfer:
+        transfer = self._transfer
+        if (
+            transfer is None
+            or transfer.transfer_id != transfer_id
+            or transfer.kind != kind
+        ):
+            raise ValueError("unknown transfer")
+        return transfer
+
+    def _read_transfer_block(
+        self,
+        request: TransferBlockRequest,
+        kind: str,
+    ) -> bytes:
+        transfer = self._require_transfer(request.transfer_id, kind)
+        if request.offset != transfer.offset:
+            raise ValueError("non-sequential transfer offset")
+        block = bytes(
+            transfer.data[transfer.offset : transfer.offset + request.length]
+        )
+        transfer.offset += len(block)
+        transfer.crc32 = zlib.crc32(block, transfer.crc32)
+        return TransferBlockResponse(
+            transfer.transfer_id,
+            request.offset,
+            block,
+            transfer.crc32,
+        ).encode()
+
+    def _end_read_transfer(
+        self,
+        request: TransferEndRequest,
+        kind: str,
+    ) -> bytes:
+        transfer = self._require_transfer(request.transfer_id, kind)
+        if transfer.offset != len(transfer.data):
+            raise ValueError("transfer is incomplete")
+        response = TransferEndResponse(transfer.offset, transfer.crc32).encode()
+        self._transfer = None
+        return response
+
+    def _write_transfer_block(self, request: TransferBlockRequest) -> bytes:
+        transfer = self._require_transfer(request.transfer_id, "file-write")
+        if (
+            request.offset != transfer.offset
+            or transfer.offset + len(request.data) > transfer.expected_size
+        ):
+            raise ValueError("invalid upload offset or length")
+        transfer.data.extend(request.data)
+        transfer.offset += len(request.data)
+        transfer.crc32 = zlib.crc32(request.data, transfer.crc32)
+        return TransferBlockResponse(
+            transfer.transfer_id,
+            request.offset,
+            b"",
+            transfer.crc32,
+        ).encode()
+
+    def _commit_write_transfer(self, request: TransferEndRequest) -> bytes:
+        transfer = self._require_transfer(request.transfer_id, "file-write")
+        if (
+            transfer.offset != transfer.expected_size
+            or transfer.crc32 != transfer.expected_crc32
+        ):
+            raise ValueError("upload size or checksum mismatch")
+        receipt = self.backend.upload_file(
+            path=transfer.path,
+            data=bytes(transfer.data),
+            overwrite=transfer.overwrite,
+        )
+        response = TransferEndResponse(receipt.size, receipt.crc32).encode()
+        self._transfer = None
+        return response
 
     def _send_response(
         self,
@@ -347,6 +517,8 @@ def _capabilities_message(capabilities: Capabilities) -> CapabilitiesMessage:
             flags |= flag
     if capabilities.keyboard_injection:
         flags |= Capability.KEYBOARD
+    if capabilities.graphics_capture:
+        flags |= Capability.GRAPHICS_CAPTURE
     adapter = (
         Adapter.LINUX_PTY
         if capabilities.backend == "linux-terminal"
@@ -390,4 +562,35 @@ def _screen_message(screen: TextScreen) -> ScreenMessage:
         code_page=437,
         generation=screen.generation & 0xFFFF,
         cells=bytes(cells),
+    )
+
+
+def _graphics_begin_message(
+    graphics: GraphicsScreen,
+    transfer_id: int,
+) -> GraphicsBeginResponse:
+    adapter = {
+        "MDA": Adapter.MDA,
+        "CGA": Adapter.CGA,
+        "EGA": Adapter.EGA,
+        "VGA": Adapter.VGA,
+    }.get(graphics.adapter, Adapter.UNKNOWN)
+    layout = {
+        "cga-2bpp-interleaved": GraphicsLayout.CGA_2BPP_INTERLEAVED,
+        "cga-1bpp-interleaved": GraphicsLayout.CGA_1BPP_INTERLEAVED,
+        "hercules-1bpp-interleaved": GraphicsLayout.HERCULES_1BPP_INTERLEAVED,
+        "planar-4bpp": GraphicsLayout.PLANAR_4BPP,
+        "planar-1bpp": GraphicsLayout.PLANAR_1BPP,
+        "packed-8bpp": GraphicsLayout.PACKED_8BPP,
+    }[graphics.layout]
+    return GraphicsBeginResponse(
+        transfer_id=transfer_id,
+        adapter=adapter,
+        video_mode=graphics.video_mode,
+        layout=layout,
+        planes=graphics.planes,
+        width=graphics.width,
+        height=graphics.height,
+        total_size=len(graphics.data),
+        bytes_per_plane=graphics.bytes_per_plane,
     )

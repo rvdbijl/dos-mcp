@@ -39,7 +39,7 @@ The whole DOS command tail normally has a 127-byte limit.
 Check, in order:
 
 1. target IP and UDP port;
-2. that the simulator or `RAGENT` is still running;
+2. that the simulator, `RAGENT`, or `RA-TSR` is running;
 3. that both sides use the same credential mode and value;
 4. host firewall rules;
 5. DOSBox-X UDP port-forward initialization;
@@ -86,17 +86,30 @@ packet-driver example is not ABI-compatible with Open Watcom's interrupt
 parameter layout and can corrupt memory. Clean stale binaries, rebuild with
 the documented Open Watcom toolchain, and rerun the harness.
 
-## The screen is blank or incorrect
+## A text screen is blank or incorrect
 
 - Verify the machine is in an 80×25 text mode.
 - Verify the active page and cursor are valid.
 - Mode 7 uses monochrome memory at `B000h`; other implemented text modes use
   `B800h`.
 - The current agent caps capture at 80 columns and 25 rows.
-- Graphics modes are not implemented and must not be interpreted as text.
+- Use `dos.capture_graphics`, not `dos.capture_screen`, in a supported graphics
+  mode.
 
 Use `dos.get_capabilities` and inspect `adapter`, `video_mode`, dimensions,
 and `active_page` in the capture.
+
+## Graphics capture is rejected or looks wrong
+
+`RA-TSR` supports CGA modes 4/5/6, Hercules graphics, EGA modes
+0Dh/0Eh/0Fh/10h, VGA modes 11h/12h, and packed VGA mode 13h. Other modes are
+rejected rather than guessed. The returned bytes are raw packed, interleaved,
+or plane-major video memory as described by the result's `layout`; they are
+not a PNG and do not include a VGA palette.
+
+Check that the application did not switch mode during capture. Direct
+hardware tricks, tweaked timings, banked SVGA, Mode X, and unusual clone
+adapters are outside the implemented format set.
 
 ## Keys are accepted but nothing happens
 
@@ -107,8 +120,9 @@ Acceptance means queueing/processing, not application-level success.
 - Try a small inter-key delay.
 - BIOS queue injection does not work for software that reads keyboard
   controller ports directly.
-- The foreground MVP controls its own shell; it is not a resident controller
-  for arbitrary applications.
+- `RAGENT` controls its own shell. `RA-TSR` can queue keys for another
+  foreground BIOS/DOS application, but direct-controller games may ignore
+  them.
 
 ## A long-running DOS command causes timeouts
 
@@ -119,6 +133,39 @@ but the operation must eventually return to the agent shell.
 
 Do not use commands that wait indefinitely for local input unless you have a
 local recovery plan.
+
+## `RA-TSR /U` refuses to unload
+
+The resident agent only unloads when its `INT 1Ch`, `INT 28h`, and `INT 2Fh`
+vectors are still the active top-of-chain handlers and no transfer is active.
+If another TSR was loaded afterward, unload that program first in reverse
+order and retry. If a transfer is active, finish/abort it or wait for session
+expiry and DOS-idle cleanup. Do not force-free the resident PSP; reboot
+normally if the chain cannot be restored safely.
+
+## Discovery does not show a resident target
+
+- Start the bridge with `DOS_MCP_DISCOVERY=1`.
+- Permit local UDP 21301 broadcasts on the intended interface.
+- Confirm `RA-TSR /Q` reports the expected name and no active session.
+- Wait at least five seconds while interrupts are enabled.
+- Remember that advertisements stop during an active bridge session.
+- Use `DOS_MCP_TARGETS` as an explicit fallback on networks that filter
+  limited broadcast.
+
+Discovery is unauthenticated. A listed name is only a routing hint; the
+normal credential handshake establishes control.
+
+## File transfer is denied or interrupted
+
+Both ends enforce file policy. Load `RA-TSR` with `R`, `W`, or `RW` and set
+the corresponding `DOS_MCP_ALLOW_FILE_READ=1` or
+`DOS_MCP_ALLOW_FILE_WRITE=1` on the bridge. Paths must remain relative to the
+configured existing DOS root and may not contain traversal components.
+
+Uploads are sequential and commit only after length and CRC-32 validation.
+After an interrupted upload, reconnect and retry; the temporary file is
+discarded on session cleanup rather than exposed as the destination.
 
 ## The Linux backend can access files outside `DOS_MCP_ROOT`
 
@@ -155,7 +202,7 @@ libraries rather than installed normally.
 
 ## Local emergency stop
 
-At the `RAGENT` shell, type `EXIT`, or hold Ctrl+Alt and press Esc. If the
-foreground child is running, the agent cannot process the hotkey until
-control returns; use the emulator or physical machine's local controls when
-necessary.
+At the `RAGENT` shell, type `EXIT`, or hold Ctrl+Alt and press Esc. For the
+resident endpoint, return to DOS and run `RA-TSR /U`. If a foreground child
+or application cannot return control, use the emulator or physical machine's
+local controls.

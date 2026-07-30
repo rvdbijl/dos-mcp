@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--shell", default="/bin/sh")
+    parser.add_argument("--allow-file-read", action="store_true")
+    parser.add_argument("--allow-file-write", action="store_true")
     return parser
 
 
@@ -35,7 +37,12 @@ def main() -> None:
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    backend = LinuxTerminalBackend(root=args.root, shell=args.shell)
+    backend = LinuxTerminalBackend(
+        root=args.root,
+        shell=args.shell,
+        allow_file_read=args.allow_file_read,
+        allow_file_write=args.allow_file_write,
+    )
     if args.key is not None:
         key = parse_key(args.key)
     elif args.password is not None:

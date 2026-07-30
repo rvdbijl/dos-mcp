@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import threading
+import zlib
 from typing import Any
 
 import pytest
 
 from dos_mcp.agent_server import UdpAgentServer
 from dos_mcp.backends.udp import UdpBackend
-from dos_mcp.models import Capabilities, Cursor, KeyReceipt, MachineStatus, TextScreen
+from dos_mcp.models import (
+    Capabilities,
+    Cursor,
+    FileContents,
+    FileReceipt,
+    GraphicsScreen,
+    KeyReceipt,
+    MachineStatus,
+    TextScreen,
+)
 from dos_mcp.protocol import OPEN_MODE_KEY
 
 KEY = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -16,6 +26,8 @@ KEY = bytes.fromhex("00112233445566778899aabbccddeeff")
 class FakeBackend:
     def __init__(self) -> None:
         self.key_calls: list[dict[str, Any]] = []
+        self.files = {"SOURCE.BIN": bytes(range(256)) * 10}
+        self.upload_calls: list[dict[str, Any]] = []
         self.closed = False
 
     def get_status(self) -> MachineStatus:
@@ -37,12 +49,14 @@ class FakeBackend:
             transport="memory",
             status=True,
             text_capture=True,
-            graphics_capture=(),
+            graphics_capture=("VGA",),
             keyboard_injection="bios-queue",
             screen_columns=80,
             screen_rows=25,
             max_text_bytes=4096,
             max_keys_per_request=15,
+            filesystem_read=True,
+            filesystem_write=True,
         )
 
     def capture_screen(self) -> TextScreen:
@@ -78,6 +92,37 @@ class FakeBackend:
             }
         )
         return KeyReceipt(len(text.encode("cp437")), len(keys), keys, 4)
+
+    def capture_graphics(self) -> GraphicsScreen:
+        data = bytes((index ^ (index >> 8)) & 0xFF for index in range(64000))
+        return GraphicsScreen(
+            adapter="VGA",
+            video_mode=0x13,
+            layout="packed-8bpp",
+            width=320,
+            height=200,
+            planes=1,
+            bytes_per_plane=len(data),
+            data=data,
+            crc32=zlib.crc32(data),
+        )
+
+    def download_file(self, *, path: str) -> FileContents:
+        data = self.files[path]
+        return FileContents(path, data, zlib.crc32(data))
+
+    def upload_file(
+        self,
+        *,
+        path: str,
+        data: bytes,
+        overwrite: bool,
+    ) -> FileReceipt:
+        self.upload_calls.append(
+            {"path": path, "data": data, "overwrite": overwrite}
+        )
+        self.files[path] = data
+        return FileReceipt(path, len(data), zlib.crc32(data))
 
     def close(self) -> None:
         self.closed = True
@@ -143,6 +188,37 @@ def test_udp_backend_operates_with_public_open_mode_key() -> None:
             backend.close()
 
     assert status.connected is True
+
+
+def test_udp_backend_graphics_and_binary_file_transfers() -> None:
+    with RunningServer() as running:
+        backend = UdpBackend(
+            target=running.server.address,
+            key=KEY,
+            allow_file_read=True,
+            allow_file_write=True,
+        )
+        upload = b"\x00\xffDOS" * 521
+        try:
+            graphics = backend.capture_graphics()
+            downloaded = backend.download_file(path="SOURCE.BIN")
+            receipt = backend.upload_file(
+                path="TARGET.BIN",
+                data=upload,
+                overwrite=True,
+            )
+        finally:
+            backend.close()
+
+    assert graphics.video_mode == 0x13
+    assert graphics.layout == "packed-8bpp"
+    assert len(graphics.data) == 64000
+    assert downloaded.data == bytes(range(256)) * 10
+    assert receipt.size == len(upload)
+    assert running.backend.files["TARGET.BIN"] == upload
+    assert running.backend.upload_calls == [
+        {"path": "TARGET.BIN", "data": upload, "overwrite": True}
+    ]
 
 
 def test_udp_retry_does_not_repeat_keyboard_mutation() -> None:

@@ -21,6 +21,8 @@ The simulator is useful for:
 - developing MCP behavior without DOSBox or hardware;
 - inspecting timeout and wrong-key behavior;
 - running deterministic Python tests around duplicate mutations.
+- exercising the same bounded download/upload protocol against a temporary
+  Linux directory when both file-policy flags are enabled.
 
 It is not a DOS emulator. Its status reports Linux, terminal input uses
 terminal escape sequences, and screen data originates from a UTF-8 PTY before
@@ -87,6 +89,7 @@ a focused first-response-drop option used by the suite, but latency,
 corruption, reordering, target reboot, and arbitrary loss profiles remain
 roadmap work.
 
-The simulator must not be exposed as a public service. It launches a shell
-and accepts authenticated keyboard input, and version 1 provides no
-confidentiality.
+The simulator must not be exposed as a public service. It launches a shell,
+can optionally access files under its configured root, and accepts
+authenticated keyboard input. Protocol version 2 provides integrity and peer
+authentication, not confidentiality.

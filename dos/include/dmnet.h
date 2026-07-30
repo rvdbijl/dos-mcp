@@ -20,5 +20,7 @@ void dm_net_close(void);
 int dm_net_poll(dm_udp_datagram *datagram);
 void dm_net_release(void);
 int dm_net_send(const dm_net_peer *peer, const dm_u8 *payload, dm_u16 length);
+int dm_net_broadcast(dm_u16 port, const dm_u8 *payload, dm_u16 length);
+const dm_u8 *dm_net_address(void);
 
 #endif

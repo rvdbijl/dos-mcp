@@ -1,80 +1,114 @@
-# Roadmap
+# Roadmap and verification status
 
-## Completed: foreground end-to-end MVP
+## Completed
 
-- [x] Distill contributor guidance into `AGENTS.md`.
-- [x] Use Python 3.12 and the official MCP Python SDK 2.x.
-- [x] Define the transport-independent backend and typed domain model.
-- [x] Expose status, capabilities, text capture, and keyboard MCP tools.
-- [x] Implement and test a bounded Linux PTY backend.
-- [x] Freeze the version-1 authenticated datagram envelope and payloads.
-- [x] Cross-check deterministic crypto/packet vectors in Python and C89.
-- [x] Implement the UDP simulator and reliable UDP bridge backend.
-- [x] Implement packet-driver discovery plus minimal ARP/IPv4/UDP.
-- [x] Implement a register-safe 16-bit packet receive upcall.
-- [x] Implement foreground DOS status and capability reporting.
-- [x] Capture the active 80×25 text page with cursor and CP437 cells.
-- [x] Inject printable and named BIOS key words with partial receipts.
-- [x] Add a local Ctrl+Alt+Esc emergency stop.
-- [x] Build `PROTOCHK.EXE` and `RAGENT.EXE` with 8086 generation.
-- [x] Verify NE2000 load and protocol vectors in DOSBox-X.
-- [x] Verify authenticated UDP, four-fragment VGA capture, remote `VER`,
-  duplicate suppression, and output recapture end to end.
-- [x] Provide a repeatable DOSBox-X harness.
+### Modern bridge and foreground MVP
 
-This completes the safe foreground MVP in `PROJECT.md`: Codex can use MCP to
-observe a DOS prompt, type a command via the BIOS queue, and capture the
-result. PicoMEM code has not been introduced.
+- [x] Python 3.12, MCP SDK 2.x, typed backend/domain layers.
+- [x] Linux PTY backend and Linux-backed UDP simulator.
+- [x] Status, capabilities, text capture, and keyboard tools.
+- [x] Foreground `RAGENT.EXE` packet-driver endpoint.
+- [x] 8086 assembly receive upcall, ARP/IPv4/UDP, retries, replay handling.
+- [x] Optional passphrase, raw 128-bit key, and conspicuous open mode.
+- [x] Cross-language protocol vectors and foreground DOSBox-X test.
 
-## Next generic milestone: resident observation
+### Protocol v2 and resident RA-TSR
 
-- Design a bounded request queue rather than the foreground single buffer.
-- Select and verify `InDOS`, critical-error, and `INT 28h` deferral behavior.
-- Move only status, text capture, and BIOS keyboard queueing into a TSR.
-- Add local activation/disable UI and a persistent remote-control indicator.
-- Measure resident paragraphs, callback cycles, 4 KB screen-copy time, packet
-  loss, and MAC cost on a genuine 4.77 MHz 8088.
-- Test DOS 3.x, 5.x, 6.x, FreeDOS, multiple packet drivers, CGA, and MDA.
+- [x] Preserve RAGENT and add separately named `RA-TSR.EXE`.
+- [x] Build all DOS code with 8086/8088 instruction generation.
+- [x] Private resident stack and shared timer/DOS-idle nested-worker guard.
+- [x] Load/query/unload with vector ownership verification and PSP release.
+- [x] Cached DOS/video facts and no video-BIOS calls from resident capture.
+- [x] Bounded streamed text VRAM capture.
+- [x] BIOS ring keyboard insertion with partial receipts.
+- [x] Opt-in sandboxed file download and temp-file upload commit with CRC32.
+- [x] Raw standard CGA/Hercules/EGA/VGA graphics state machine.
+- [x] Replace per-block XTEA MAC with pre-expanded native-16-bit Speck MAC.
+- [x] Protocol-v2 odd-frame padding for word-wide NE2000 drivers.
+- [x] Exact DOSBox-X 64 KiB VGA mode 13h capture.
+- [x] DOSBox-X resident status/text/keys/file/unload integration.
 
-## Then: generic agent shell services
+### Discovery and multiple systems
 
-- Direct, policy-aware execution with state and bounded output.
-- Sandboxed directory listing, stat, and binary reads.
-- Reliable upload/download transactions with temporary files and CRC32.
-- DOS path/device-name validation, free-space checks, and atomic replacement.
-- Explicit modern-host authorization and local approvals for writes.
+- [x] User-visible 1–31 byte RA-TSR name.
+- [x] Disconnected local Ethernet/IP broadcast with TTL 1.
+- [x] Approximately five-second interval and 30-second session expiry.
+- [x] Strict discovery codec with CRC and stable adapter ID.
+- [x] Named static multi-target configuration.
+- [x] Nonblocking Linux discovery listener and target registry.
+- [x] `dos.list_targets` and optional selector on every target tool.
+- [x] Explicit-target requirement when multiple machines are known.
 
-## Later generic capabilities
+PicoMEM/PicoMEM2 code remains intentionally unimplemented.
 
-- CGA and Hercules raw capture/rendering, then EGA and VGA.
-- Wait-for-change, wait-for-stable, and wait-for-text on the bridge.
-- Policy-controlled memory reads and diagnostics.
-- Restricted memory writes and port I/O only after independent enforcement.
-- Protocol cancellation, selective missing-fragment recovery, and fault
-  injection for loss, reordering, corruption, and target reboot.
+## Next: hardening and physical validation
 
-PicoMEM/PicoMEM2 research and implementation remain intentionally deferred.
+- [ ] Measure load size, resident paragraphs, and private-stack high water.
+- [ ] Measure handshake, MAC, 256-byte fragment, and graphics-block timing on a
+  genuine 4.77 MHz 8088.
+- [ ] Test DOS 3.x, 5.x, 6.x, FreeDOS, 286, 386, and 486 machines.
+- [ ] Test representative Crynwr packet drivers/adapters under loss/load.
+- [ ] Validate `INT 28h` file dispatch and critical-error behavior by DOS
+  version.
+- [ ] Validate unload ordering with common memory managers and TSR stacks.
+- [ ] Add distinct-plane fixtures for CGA, Hercules, EGA, and VGA planar modes.
+- [ ] Fuzz protocol, discovery, path, and transfer codecs.
+- [ ] Independent review of 16-bit arithmetic, far pointers, vector hooks, and
+  packet-driver ABI.
 
-## Unresolved assumptions requiring verification
+## Next: modern-host usability
+
+- [ ] Per-target credential provider/keyring integration.
+- [ ] Discovery expiry/pinning and rate limiting.
+- [ ] Optional rendered PNG output and captured palette/DAC state.
+- [ ] Wait-for-change, wait-for-stable, and wait-for-text logical operations.
+- [ ] Per-target operation locks so independent machines can run concurrently.
+- [ ] Persistent structured audit logging with secret/screen policy.
+- [ ] Better transfer progress/cancellation and selective block retry.
+
+## Security gates before less-trusted networks
+
+- [ ] Wider packet authentication tag or secure authenticated outer tunnel.
+- [ ] Credential provisioning and rotation workflow.
+- [ ] Rate limiting for handshake, discovery, and invalid packets.
+- [ ] Multi-controller ownership/revocation rules.
+- [ ] Security audit of DOS file device names/aliases.
+- [ ] Clear firewall examples for physical, VM, and container deployments.
+
+## Explicitly deferred or excluded
+
+- Direct arbitrary execution as an MCP tool.
+- Memory writes, port writes, interrupt calls, reboot, and sector writes.
+- Windows/Windows 9x resident operation.
+- Compatibility promises for protected-mode extenders or direct-hardware
+  keyboard/video games.
+- Stealth, autorun persistence, evasion, or hidden local indicators.
+- PicoMEM/PicoMEM2 integration until explicitly requested.
+
+## Unresolved assumptions
 
 ### Real hardware
 
-- Exact Open Watcom runtime footprint and instruction stream on an 8088.
-- MAC, screen-copy, and packet-processing latency at 4.77 MHz.
-- Packet-driver callback behavior and loss across representative adapters.
-- BIOS keyboard queue sizes and enhanced-key behavior across BIOS families.
-- EGA/VGA detection fallbacks on early or unusual BIOS implementations.
-- Safe DOS deferral points and critical-error handling by DOS version.
+- Open Watcom/runtime behavior matches DOSBox across target CPUs.
+- The 32 KiB private stack is sufficient and the retained 128 KiB block can be
+  safely reduced.
+- Packet-driver transmit downcalls are safe from the selected deferred context
+  on representative drivers.
+- BIOS Data Area offsets and `INT 28h`/critical-error conventions match
+  supported DOS families.
+- Early EGA/VGA/Hercules clones implement the ports/memory maps used.
 
-### Protocol and security
+### Protocol/security
 
-- Whether a 1,024-byte application fragment performs well on slow adapters.
-- Operational provisioning and rotation of a unique key per machine.
-- Rate limiting and whether a wider authentication tag is affordable.
-- Parser fuzzing and an independent audit of both implementations.
+- A 32-bit tag is acceptable only on the documented private network.
+- One shared bridge credential is insufficient for ideal multi-target
+  deployments and must be replaced with per-target secret resolution.
+- CRC32 protects transfer integrity but is not authentication independent of
+  the packet MAC.
+- Discovery adapter IDs can collide or be spoofed and must remain advisory.
 
 ### Publication
 
 - Final project license.
-- Attribution/distribution policy for packet-driver binaries.
-- CP437 font licensing when image rendering is added.
+- Packet-driver acquisition/redistribution and attribution.
+- CP437 font/palette assets if rendering ships.

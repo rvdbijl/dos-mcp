@@ -19,6 +19,12 @@ static dm_u16 read_be16(const dm_u8 *value);
 static void write_be16(dm_u8 *output, dm_u16 value);
 static dm_u16 ip_checksum(const dm_u8 *data, dm_u16 length);
 static void handle_arp(const dm_u8 *frame, dm_u16 length);
+static int send_to(
+    const dm_net_peer *peer,
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 ttl
+);
 
 int dm_net_open(dm_u8 packet_interrupt, const dm_u8 ip[4], dm_u16 port)
 {
@@ -98,6 +104,31 @@ void dm_net_release(void)
 
 int dm_net_send(const dm_net_peer *peer, const dm_u8 *payload, dm_u16 length)
 {
+    return send_to(peer, payload, length, 64);
+}
+
+int dm_net_broadcast(dm_u16 port, const dm_u8 *payload, dm_u16 length)
+{
+    dm_net_peer peer;
+
+    memset(peer.mac, 0xFF, sizeof(peer.mac));
+    memset(peer.ip, 0xFF, sizeof(peer.ip));
+    peer.port = port;
+    return send_to(&peer, payload, length, 1);
+}
+
+const dm_u8 *dm_net_address(void)
+{
+    return dm_packet_address();
+}
+
+static int send_to(
+    const dm_net_peer *peer,
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 ttl
+)
+{
     dm_u8 *ip;
     dm_u8 *udp;
     dm_u16 ip_length;
@@ -114,7 +145,7 @@ int dm_net_send(const dm_net_peer *peer, const dm_u8 *payload, dm_u16 length)
     ip_length = IP_HEADER + UDP_HEADER + length;
     write_be16(ip + 2, ip_length);
     write_be16(ip + 4, ip_identifier++);
-    ip[8] = 64;
+    ip[8] = ttl;
     ip[9] = 17;
     memcpy(ip + 12, local_ip, 4);
     memcpy(ip + 16, peer->ip, 4);
@@ -130,6 +161,13 @@ int dm_net_send(const dm_net_peer *peer, const dm_u8 *payload, dm_u16 length)
         memset(transmit_frame + frame_length, 0, 60 - frame_length);
         frame_length = 60;
     }
+    /*
+     * Word-mode NE2000 drivers may DMA one final 16-bit word for odd frames.
+     * Add Ethernet padding outside the declared IP length so the driver never
+     * reads beyond the supplied buffer.
+     */
+    if (frame_length & 1)
+        transmit_frame[frame_length++] = 0;
     return dm_packet_send(transmit_frame, frame_length);
 }
 

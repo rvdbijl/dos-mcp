@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -121,3 +122,72 @@ class KeyReceipt:
         value = asdict(self)
         value["keys"] = list(self.keys)
         return value
+
+
+@dataclass(frozen=True, slots=True)
+class FileContents:
+    path: str
+    data: bytes
+    crc32: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "size": len(self.data),
+            "crc32": f"{self.crc32:08x}",
+            "content_base64": base64.b64encode(self.data).decode("ascii"),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FileReceipt:
+    path: str
+    size: int
+    crc32: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "size": self.size,
+            "crc32": f"{self.crc32:08x}",
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GraphicsScreen:
+    adapter: str
+    video_mode: int
+    layout: str
+    width: int
+    height: int
+    planes: int
+    bytes_per_plane: int
+    data: bytes
+    crc32: int
+
+    def __post_init__(self) -> None:
+        if self.width < 1 or self.height < 1:
+            raise ValueError("graphics dimensions must be positive")
+        if not 1 <= self.planes <= 4:
+            raise ValueError("graphics plane count must be between 1 and 4")
+        if self.bytes_per_plane < 1:
+            raise ValueError("graphics bytes_per_plane must be positive")
+        if len(self.data) != self.planes * self.bytes_per_plane:
+            raise ValueError("graphics data length does not match plane metadata")
+        if not 0 <= self.crc32 <= 0xFFFFFFFF:
+            raise ValueError("graphics CRC32 must fit in 32 bits")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "graphics",
+            "adapter": self.adapter,
+            "video_mode": self.video_mode,
+            "layout": self.layout,
+            "width": self.width,
+            "height": self.height,
+            "planes": self.planes,
+            "bytes_per_plane": self.bytes_per_plane,
+            "size": len(self.data),
+            "crc32": f"{self.crc32:08x}",
+            "data_base64": base64.b64encode(self.data).decode("ascii"),
+        }

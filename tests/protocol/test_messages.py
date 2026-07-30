@@ -4,6 +4,10 @@ from dos_mcp.protocol import (
     Adapter,
     CapabilitiesMessage,
     Capability,
+    FileReadBeginRequest,
+    FileWriteBeginRequest,
+    GraphicsBeginResponse,
+    GraphicsLayout,
     HelloRequest,
     HelloResponse,
     KeyCode,
@@ -12,6 +16,11 @@ from dos_mcp.protocol import (
     Phase,
     ScreenMessage,
     StatusMessage,
+    TransferBeginResponse,
+    TransferBlockRequest,
+    TransferBlockResponse,
+    TransferEndRequest,
+    TransferEndResponse,
 )
 
 
@@ -80,3 +89,69 @@ def test_key_request_rejects_unknown_key_code() -> None:
 
     with pytest.raises(ValueError):
         KeyRequest.decode(encoded)
+
+
+def test_file_and_transfer_messages_round_trip() -> None:
+    file_read = FileReadBeginRequest(b"RESULT.BIN")
+    file_write = FileWriteBeginRequest(b"INPUT.BIN", 3, 0x12345678, True)
+    begin = TransferBeginResponse(7, 3)
+    block_response = TransferBlockResponse(7, 0, b"DOS", 0x87654321)
+    end_request = TransferEndRequest(7)
+    end_response = TransferEndResponse(3, 0x87654321)
+
+    assert FileReadBeginRequest.decode(file_read.encode()) == file_read
+    assert FileWriteBeginRequest.decode(file_write.encode()) == file_write
+    assert file_write.encode()[:10].hex() == "01030000007856341209"
+    assert TransferBeginResponse.decode(begin.encode()) == begin
+    assert TransferBlockResponse.decode(block_response.encode()) == block_response
+    assert TransferEndRequest.decode(end_request.encode()) == end_request
+    assert TransferEndResponse.decode(end_response.encode()) == end_response
+
+    download_request = TransferBlockRequest(7, 0, 3)
+    upload_request = TransferBlockRequest(7, 0, 3, b"DOS")
+    assert (
+        TransferBlockRequest.decode(download_request.encode(), has_data=False)
+        == download_request
+    )
+    assert (
+        TransferBlockRequest.decode(upload_request.encode(), has_data=True)
+        == upload_request
+    )
+
+
+def test_graphics_metadata_round_trip_and_consistency() -> None:
+    value = GraphicsBeginResponse(
+        transfer_id=9,
+        adapter=Adapter.VGA,
+        video_mode=0x12,
+        layout=GraphicsLayout.PLANAR_4BPP,
+        planes=4,
+        width=640,
+        height=480,
+        total_size=153600,
+        bytes_per_plane=38400,
+    )
+
+    assert GraphicsBeginResponse.decode(value.encode()) == value
+
+    inconsistent = bytearray(value.encode())
+    inconsistent[5] = 1
+    with pytest.raises(ValueError, match="graphics metadata"):
+        GraphicsBeginResponse.decode(bytes(inconsistent))
+
+
+def test_capabilities_reject_unknown_flags() -> None:
+    encoded = bytearray(
+        CapabilitiesMessage(
+            Capability.STATUS,
+            80,
+            25,
+            Adapter.CGA,
+            1024,
+            15,
+        ).encode()
+    )
+    encoded[3] |= 0x80
+
+    with pytest.raises(ValueError, match="capability flags"):
+        CapabilitiesMessage.decode(bytes(encoded))

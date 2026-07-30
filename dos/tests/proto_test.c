@@ -11,10 +11,19 @@ static const dm_u8 expected_xtea[8] = {
     0x93, 0x00, 0x99, 0x13, 0xE1, 0xC4, 0xF7, 0x85
 };
 static const dm_u8 expected_packet[] = {
-    0x44, 0x4D, 0x01, 0x01, 0x02, 0x00, 0x34, 0x12,
-    0x78, 0x56, 0x00, 0x01, 0x06, 0x00, 0xE0, 0x59,
-    0xBA, 0x98, 0x11, 0x28, 0x73, 0x74, 0x61, 0x74,
+    0x44, 0x4D, 0x02, 0x01, 0x02, 0x00, 0x34, 0x12,
+    0x78, 0x56, 0x00, 0x01, 0x06, 0x00, 0x92, 0x59,
+    0xB7, 0x70, 0x73, 0x54, 0x73, 0x74, 0x61, 0x74,
     0x75, 0x73
+};
+static const dm_u8 expected_packet32[] = {
+    0x44, 0x4D, 0x02, 0x01, 0x06, 0x00, 0x34, 0x12,
+    0x78, 0x56, 0x00, 0x01, 0x20, 0x00, 0x28, 0x8A,
+    0x59, 0x09, 0x00, 0x3D,
+    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
+    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
+    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
+    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x'
 };
 static const dm_u8 expected_sha256[32] = {
     0xBA, 0x78, 0x16, 0xBF, 0x8F, 0x01, 0xCF, 0xEA,
@@ -39,6 +48,7 @@ int main(void)
 {
     dm_u8 block[8] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
     dm_u8 output[64];
+    dm_u8 payload32[32];
     dm_u16 output_length = 0;
     dm_u8 long_password[100];
     dm_packet packet;
@@ -114,11 +124,26 @@ int main(void)
         puts("FAIL corruption");
         return 9;
     }
+    memset(payload32, 'x', sizeof(payload32));
+    packet.kind = DM_KIND_REQUEST;
+    packet.opcode = DM_OP_PING;
+    packet.payload_length = sizeof(payload32);
+    packet.payload = payload32;
+    result = dm_packet_encode(&packet, key, output, sizeof(output), &output_length);
+    if (result != DM_OK
+        || output_length != sizeof(expected_packet32)
+        || memcmp(output, expected_packet32, sizeof(expected_packet32)) != 0
+        || dm_packet_decode(output, output_length, key, &decoded) != DM_OK
+        || decoded.payload_length != sizeof(payload32)
+        || memcmp(decoded.payload, payload32, sizeof(payload32)) != 0) {
+        puts("FAIL 32-byte packet");
+        return 10;
+    }
     packet.kind = 0;
     if (dm_packet_encode(
         &packet, key, output, sizeof(output), &output_length) != DM_ERR_ENUM) {
         puts("FAIL enum validation");
-        return 10;
+        return 11;
     }
     puts("PASS protocol vectors");
     return 0;

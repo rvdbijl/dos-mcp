@@ -10,19 +10,30 @@ import select
 import signal
 import struct
 import subprocess
+import tempfile
 import termios
 import time
+import zlib
 from contextlib import suppress
 from pathlib import Path
 
 from dos_mcp import __version__
-from dos_mcp.models import Capabilities, KeyReceipt, MachineStatus, TextScreen
+from dos_mcp.models import (
+    Capabilities,
+    FileContents,
+    FileReceipt,
+    GraphicsScreen,
+    KeyReceipt,
+    MachineStatus,
+    TextScreen,
+)
 from dos_mcp.terminal import TerminalBuffer
 
 MAX_TEXT_BYTES = 4096
 MAX_KEYS = 128
 MAX_SEND_DELAY_MS = 30_000
 MAX_DRAIN_BYTES = 1_048_576
+MAX_FILE_BYTES = 1_048_576
 
 KEY_SEQUENCES = {
     "ENTER": b"\r",
@@ -65,6 +76,8 @@ class LinuxTerminalBackend:
         shell: str = "/bin/sh",
         columns: int = 80,
         rows: int = 25,
+        allow_file_read: bool = False,
+        allow_file_write: bool = False,
     ) -> None:
         resolved_root = root.expanduser().resolve()
         if not resolved_root.is_dir():
@@ -78,6 +91,8 @@ class LinuxTerminalBackend:
         self.shell = shell
         self.columns = columns
         self.rows = rows
+        self.allow_file_read = allow_file_read
+        self.allow_file_write = allow_file_write
         self._terminal = TerminalBuffer(columns=columns, rows=rows)
         self._master_fd: int | None = None
         self._process: subprocess.Popen[bytes] | None = None
@@ -115,12 +130,66 @@ class LinuxTerminalBackend:
             screen_rows=self.rows,
             max_text_bytes=MAX_TEXT_BYTES,
             max_keys_per_request=MAX_KEYS,
+            filesystem_read=self.allow_file_read,
+            filesystem_write=self.allow_file_write,
         )
 
     def capture_screen(self) -> TextScreen:
         self._ensure_started()
         self._drain(0.05)
         return self._terminal.snapshot()
+
+    def capture_graphics(self) -> GraphicsScreen:
+        raise NotImplementedError("the Linux terminal backend has no graphics screen")
+
+    def download_file(self, *, path: str) -> FileContents:
+        if not self.allow_file_read:
+            raise PermissionError("file downloads are disabled by backend policy")
+        target = self._resolve_file(path)
+        if not target.is_file():
+            raise FileNotFoundError(path)
+        data = target.read_bytes()
+        if len(data) > MAX_FILE_BYTES:
+            raise ValueError("file exceeds the backend download limit")
+        return FileContents(path=path, data=data, crc32=zlib.crc32(data))
+
+    def upload_file(
+        self,
+        *,
+        path: str,
+        data: bytes,
+        overwrite: bool,
+    ) -> FileReceipt:
+        if not self.allow_file_write:
+            raise PermissionError("file uploads are disabled by backend policy")
+        if len(data) > MAX_FILE_BYTES:
+            raise ValueError("file exceeds the backend upload limit")
+        target = self._resolve_file(path)
+        if not target.parent.is_dir():
+            raise FileNotFoundError(f"parent directory does not exist: {path}")
+        if target.exists() and not overwrite:
+            raise FileExistsError(path)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=target.parent,
+                prefix="DOSMCP-",
+                suffix=".TMP",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(data)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            if target.exists() and not overwrite:
+                raise FileExistsError(path)
+            os.replace(temporary_path, target)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                with suppress(FileNotFoundError):
+                    temporary_path.unlink()
+        return FileReceipt(path=path, size=len(data), crc32=zlib.crc32(data))
 
     def send_keys(
         self,
@@ -238,6 +307,17 @@ class LinuxTerminalBackend:
                 offset += os.write(self._master_fd, value[offset:])
             except BlockingIOError:
                 select.select([], [self._master_fd], [], 0.1)
+
+    def _resolve_file(self, path: str) -> Path:
+        relative = Path(path)
+        if relative.is_absolute():
+            raise ValueError("file path must be relative to the configured root")
+        target = (self.root / relative).resolve()
+        try:
+            target.relative_to(self.root)
+        except ValueError as exc:
+            raise ValueError("file path escapes the configured root") from exc
+        return target
 
     def _drain(self, timeout: float) -> None:
         if self._master_fd is None:

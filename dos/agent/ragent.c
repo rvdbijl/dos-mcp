@@ -3,28 +3,62 @@
 
 #include <bios.h>
 #include <conio.h>
+#include <direct.h>
 #include <dos.h>
 #include <i86.h>
+#include <io.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #define AGENT_PORT 21300
-#define MAX_RESPONSE_FRAGMENTS 5
 #define RESPONSE_DATAGRAM_SIZE (DM_HEADER_SIZE + DM_MAX_FRAGMENT_PAYLOAD)
 #define REQUEST_BUFFER_SIZE 4229
 #define SCREEN_BUFFER_SIZE 4013
 
+#ifdef RA_TSR
+#define RESPONSE_FRAGMENT_PAYLOAD 256
+#define MAX_RESPONSE_FRAGMENTS 16
+#else
+#define RESPONSE_FRAGMENT_PAYLOAD DM_MAX_FRAGMENT_PAYLOAD
+#define MAX_RESPONSE_FRAGMENTS 5
+#endif
+
 #define CAP_STATUS 0x00000001UL
 #define CAP_TEXT 0x00000002UL
 #define CAP_KEYBOARD 0x00000004UL
+#define CAP_FILESYSTEM_READ 0x00000008UL
+#define CAP_FILESYSTEM_WRITE 0x00000010UL
+#define CAP_GRAPHICS 0x00000800UL
 
 #define PHASE_AGENT_SHELL_READY 3
 #define ADAPTER_MDA 1
 #define ADAPTER_CGA 2
 #define ADAPTER_EGA 3
 #define ADAPTER_VGA 4
+
+#ifdef RA_TSR
+#define TSR_MULTIPLEX 0xD05A
+#define TSR_REPLY 0x5A5A
+#define TRANSFER_NONE 0
+#define TRANSFER_READ 1
+#define TRANSFER_WRITE 2
+#define TRANSFER_GRAPHICS 3
+#define TRANSFER_BLOCK_MAX 900
+#define TSR_FILE_MAX 1048576UL
+#define TSR_PATH_MAX 127
+#define TSR_NAME_MAX 31
+#define DISCOVERY_PORT 21301
+#define DISCOVERY_INTERVAL_TICKS 91
+#define SESSION_IDLE_TICKS 546
+#define LAYOUT_CGA_2BPP 1
+#define LAYOUT_CGA_1BPP 2
+#define LAYOUT_HERCULES 3
+#define LAYOUT_PLANAR_4BPP 4
+#define LAYOUT_PLANAR_1BPP 5
+#define LAYOUT_PACKED_8BPP 6
+#endif
 
 typedef struct agent_session {
     dm_u8 active;
@@ -34,8 +68,22 @@ typedef struct agent_session {
     dm_u16 last_request_id;
     dm_u8 has_last_request;
     dm_u8 response_count;
+#ifdef RA_TSR
+    dm_u8 response_next;
+    dm_u8 response_pending;
+    dm_u8 response_kind;
+    dm_u8 response_opcode;
+    dm_u16 response_request_id;
+    dm_u16 response_payload_length;
+    dm_u16 last_activity_tick;
+#endif
+#ifdef RA_TSR
+    dm_u16 response_lengths[1];
+    dm_u8 responses[1][RESPONSE_DATAGRAM_SIZE];
+#else
     dm_u16 response_lengths[MAX_RESPONSE_FRAGMENTS];
     dm_u8 responses[MAX_RESPONSE_FRAGMENTS][RESPONSE_DATAGRAM_SIZE];
+#endif
 } agent_session;
 
 static dm_u8 base_key[16];
@@ -47,8 +95,66 @@ static dm_u16 request_id;
 static dm_u8 request_fragment_count;
 static dm_u8 request_opcode;
 static dm_u8 screen_buffer[SCREEN_BUFFER_SIZE];
+#ifndef RA_TSR
 static dm_u8 running = 1;
+#endif
 static dm_u32 agent_start_ticks;
+
+#ifdef RA_TSR
+void (__interrupt __far *ratsr_old_int1c)(void);
+void (__interrupt __far *ratsr_old_int28)(void);
+void (__interrupt __far *ratsr_old_int2f)(void);
+dm_u16 ratsr_psp;
+volatile dm_u8 ratsr_enabled;
+volatile dm_u16 ratsr_ticks;
+volatile int ratsr_last_protocol_result;
+volatile dm_u8 ratsr_last_opcode;
+volatile int ratsr_last_send_result;
+static char sandbox_root[TSR_PATH_MAX + 1];
+static char agent_name[TSR_NAME_MAX + 1];
+static dm_u8 discovery_open_mode;
+static dm_u16 discovery_last_tick;
+static dm_u16 advertised_port;
+static dm_u8 allow_file_read;
+static dm_u8 allow_file_write;
+static dm_u8 cached_dos_major;
+static dm_u8 cached_dos_minor;
+static dm_u8 cached_adapter;
+static volatile dm_u8 __far *indos_flag;
+static volatile dm_u8 __far *critical_error_flag;
+volatile dm_u8 transfer_kind;
+static dm_u16 transfer_id;
+static int transfer_handle = -1;
+static dm_u32 transfer_size;
+static dm_u32 transfer_offset;
+static dm_u32 transfer_crc;
+static dm_u32 transfer_expected_crc;
+static dm_u8 transfer_overwrite;
+static char transfer_path[TSR_PATH_MAX + 1];
+static char transfer_temp[TSR_PATH_MAX + 1];
+static dm_u8 graphics_layout;
+static dm_u8 graphics_planes;
+static dm_u16 graphics_width;
+static dm_u16 graphics_height;
+static dm_u32 graphics_bytes_per_plane;
+static dm_u8 graphics_mode;
+static dm_u8 text_capture_header[13];
+static dm_u16 text_capture_segment;
+static dm_u16 text_capture_offset;
+static dm_u16 text_capture_cells;
+extern void __interrupt __far ratsr_idle_handler(void);
+extern void __interrupt __far ratsr_dos_idle_handler(void);
+extern void __interrupt __far ratsr_multiplex_handler(void);
+extern int ratsr_bios_queue_word(dm_u16 word);
+extern void ratsr_set_old_vectors(
+    dm_u16 int1c_offset,
+    dm_u16 int1c_segment,
+    dm_u16 int2f_offset,
+    dm_u16 int2f_segment
+);
+extern void ratsr_set_old_int28(dm_u16 offset, dm_u16 segment);
+extern char __far ratsr_resident_end;
+#endif
 
 static int parse_ip(const char *text, dm_u8 output[4]);
 static int parse_raw_key(const char *text, dm_u8 output[16]);
@@ -79,16 +185,72 @@ static void send_error(dm_u8 opcode, dm_u16 id, dm_u16 code, const char *message
 static void resend_cached(void);
 static dm_u16 build_status(dm_u8 *output);
 static dm_u16 build_capabilities(dm_u8 *output);
+#ifndef RA_TSR
 static dm_u16 capture_screen(dm_u8 *output);
+#else
+static dm_u16 prepare_text_capture(void);
+static void fill_text_capture_fragment(
+    dm_u16 offset,
+    dm_u16 length,
+    dm_u8 *output
+);
+#endif
 static dm_u16 inject_keys(const dm_u8 *payload, dm_u16 length, dm_u8 *output);
 static int bios_queue_word(dm_u16 word);
 static dm_u8 ascii_scan(dm_u8 value);
 static dm_u16 named_key_word(dm_u8 key);
+#ifndef RA_TSR
 static void process_shell_keyboard(void);
 static void print_prompt(void);
+#endif
 static dm_u32 read_bios_ticks(void);
 static dm_u8 detect_adapter(dm_u8 video_mode);
+#ifdef RA_TSR
+static int uninstall_tsr(void);
+static int configure_tsr(int argc, char **argv);
+static void keep_resident(void);
+static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length);
+static int safe_relative_path(const char *path);
+static int build_sandbox_path(
+    const dm_u8 *value,
+    dm_u16 length,
+    char *output
+);
+static void close_transfer(int remove_temporary);
+static dm_u16 begin_file_read(const dm_u8 *payload, dm_u16 length, dm_u8 *output);
+static dm_u16 read_transfer_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+);
+static dm_u16 end_read_transfer(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+);
+static dm_u16 begin_file_write(const dm_u8 *payload, dm_u16 length, dm_u8 *output);
+static dm_u16 write_transfer_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+);
+static dm_u16 commit_file_write(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+);
+static dm_u16 abort_transfer(const dm_u8 *payload, dm_u16 length);
+static void send_discovery(void);
+static dm_u16 begin_graphics(dm_u8 *output);
+static int graphics_info(void);
+static dm_u16 read_graphics_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+);
+#endif
 
+#ifndef RA_TSR
 int main(int argc, char **argv)
 {
     dm_u8 ip[4] = {10, 0, 2, 15};
@@ -145,6 +307,114 @@ int main(int argc, char **argv)
     puts("\nRAGENT stopped.");
     return 0;
 }
+#else
+int main(int argc, char **argv)
+{
+    dm_u8 ip[4] = {10, 0, 2, 15};
+    dm_u16 port = AGENT_PORT;
+    dm_u8 packet_interrupt = 0x60;
+    dm_u8 open_mode;
+    union REGS input;
+    union REGS output;
+    union REGPACK registers;
+    int result;
+
+    if (argc == 2 && stricmp(argv[1], "/U") == 0)
+        return uninstall_tsr();
+    if (argc > 8) {
+        puts("Usage: RA-TSR [credential] [ip] [port] [packet-int] [root] [access] [name]");
+        puts("  access: - (none), R, W, or RW; name: 1-31 visible ASCII");
+        puts("  unload with RA-TSR /U");
+        return 1;
+    }
+    memset(&input, 0, sizeof(input));
+    input.x.ax = TSR_MULTIPLEX;
+    input.x.bx = 0;
+    int86(0x2F, &input, &output);
+    if (output.x.ax == TSR_REPLY) {
+        delay(1000);
+        memset(&input, 0, sizeof(input));
+        input.x.ax = TSR_MULTIPLEX;
+        input.x.bx = 2;
+        int86(0x2F, &input, &output);
+        printf("RA-TSR: installed, ticks %u, receive %u/%u, protocol %d/%d\n",
+            output.x.bx, output.x.cx, output.x.dx,
+            (int)output.x.si, (int)output.x.di);
+        return 2;
+    }
+    if (parse_credential(argc >= 2 ? argv[1] : 0, base_key, &open_mode) != 0) {
+        puts("RA-TSR: invalid or empty credential");
+        return 3;
+    }
+    if (argc >= 3 && parse_ip(argv[2], ip) != 0) {
+        puts("RA-TSR: invalid IPv4 address");
+        return 4;
+    }
+    if (argc >= 4)
+        port = (dm_u16)strtoul(argv[3], 0, 0);
+    if (argc >= 5)
+        packet_interrupt = (dm_u8)strtoul(argv[4], 0, 0);
+    if (!port || configure_tsr(argc, argv) != 0) {
+        puts("RA-TSR: invalid port, sandbox root, access mode, or name");
+        return 5;
+    }
+    memset(&input, 0, sizeof(input));
+    input.h.ah = 0x30;
+    intdos(&input, &output);
+    cached_dos_major = output.h.al;
+    cached_dos_minor = output.h.ah;
+    cached_adapter = detect_adapter(
+        *(volatile dm_u8 __far *)MK_FP(0x40, 0x49)
+    );
+    memset(&session, 0, sizeof(session));
+    discovery_open_mode = open_mode;
+    discovery_last_tick = (dm_u16)(0 - DISCOVERY_INTERVAL_TICKS);
+    advertised_port = port;
+    result = dm_net_open(packet_interrupt, ip, port);
+    if (result != 0) {
+        printf("RA-TSR: packet driver initialization failed (%d)\n", result);
+        return 6;
+    }
+    agent_start_ticks = read_bios_ticks();
+    ratsr_psp = _psp;
+    memset(&registers, 0, sizeof(registers));
+    registers.h.ah = 0x34;
+    intr(0x21, &registers);
+    indos_flag =
+        (volatile dm_u8 __far *)MK_FP(registers.w.es, registers.w.bx);
+    critical_error_flag = indos_flag - 1;
+    ratsr_old_int1c = _dos_getvect(0x1C);
+    ratsr_old_int28 = _dos_getvect(0x28);
+    ratsr_old_int2f = _dos_getvect(0x2F);
+    ratsr_set_old_vectors(
+        _FP_OFF(ratsr_old_int1c),
+        _FP_SEG(ratsr_old_int1c),
+        _FP_OFF(ratsr_old_int2f),
+        _FP_SEG(ratsr_old_int2f)
+    );
+    ratsr_set_old_int28(
+        _FP_OFF(ratsr_old_int28),
+        _FP_SEG(ratsr_old_int28)
+    );
+    ratsr_enabled = 1;
+    _dos_setvect(0x1C, ratsr_idle_handler);
+    _dos_setvect(0x28, ratsr_dos_idle_handler);
+    _dos_setvect(0x2F, ratsr_multiplex_handler);
+    printf("RA-TSR 0.2 \"%s\" installed at %u.%u.%u.%u:%u, video %u, root %s, access %s%s\n",
+        agent_name, ip[0], ip[1], ip[2], ip[3], port,
+        cached_adapter, sandbox_root,
+        allow_file_read ? "R" : "",
+        allow_file_write ? "W" : "");
+    if (!allow_file_read && !allow_file_write)
+        puts("Filesystem access disabled.");
+    if (open_mode)
+        puts("WARNING: OPEN MODE - packets are not authenticated.");
+    puts("Unload with RA-TSR /U.");
+    fflush(stdout);
+    keep_resident();
+    return 0;
+}
+#endif
 
 static int parse_ip(const char *text, dm_u8 output[4])
 {
@@ -259,6 +529,7 @@ static dm_u32 make_nonce(void)
 static void process_datagram(const dm_udp_datagram *datagram)
 {
     dm_packet packet;
+    int decode_result;
     const dm_u8 *key;
     dm_u16 final_length;
     dm_u8 index;
@@ -271,9 +542,16 @@ static void process_datagram(const dm_udp_datagram *datagram)
             return;
         key = session.key;
     }
-    if (dm_packet_decode(
-        datagram->payload, datagram->payload_length, key, &packet) != DM_OK)
+    decode_result = dm_packet_decode(
+        datagram->payload, datagram->payload_length, key, &packet);
+#ifdef RA_TSR
+    ratsr_last_protocol_result = decode_result;
+#endif
+    if (decode_result != DM_OK)
         return;
+#ifdef RA_TSR
+    ratsr_last_opcode = packet.opcode;
+#endif
     if (packet.kind != DM_KIND_REQUEST)
         return;
     if (packet.opcode == DM_OP_HELLO && packet.session_id == 0) {
@@ -286,6 +564,9 @@ static void process_datagram(const dm_udp_datagram *datagram)
         || memcmp(session.peer.ip, datagram->peer.ip, 4) != 0
         || session.peer.port != datagram->peer.port)
         return;
+#ifdef RA_TSR
+    session.last_activity_tick = ratsr_ticks;
+#endif
     if (session.has_last_request && packet.request_id == session.last_request_id) {
         resend_cached();
         return;
@@ -363,6 +644,9 @@ static void process_hello(const dm_packet *packet, const dm_net_peer *peer)
         dm_net_send(peer, datagram, datagram_length);
     dm_derive_session_key(base_key, client_nonce, server_nonce, session.key);
     session.active = 1;
+#ifdef RA_TSR
+    session.last_activity_tick = ratsr_ticks;
+#endif
     session.has_last_request = 0;
     session.response_count = 0;
 }
@@ -396,9 +680,22 @@ static void process_request(
             send_error(opcode, id, 6, "screen payload must be empty");
             return;
         }
+#ifdef RA_TSR
+        response_length = prepare_text_capture();
+#else
         response_length = capture_screen(screen_buffer);
+#endif
         break;
     case DM_OP_SEND_KEYS:
+#ifdef RA_TSR
+        if (length == 5 && dm_get_u16(payload) == 0 && payload[2] == 0) {
+            dm_put_u16(screen_buffer, 0);
+            screen_buffer[2] = 0;
+            dm_put_u16(screen_buffer + 3, 0);
+            response_length = 5;
+            break;
+        }
+#endif
         response_length = inject_keys(payload, length, screen_buffer);
         if (!response_length) {
             send_error(opcode, id, 6, "invalid key request");
@@ -413,6 +710,77 @@ static void process_request(
         memcpy(screen_buffer, payload, length);
         response_length = length;
         break;
+#ifdef RA_TSR
+    case DM_OP_FILE_READ_BEGIN:
+        response_length = begin_file_read(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "file read denied or invalid");
+            return;
+        }
+        break;
+    case DM_OP_FILE_READ_BLOCK:
+        response_length = read_transfer_block(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "invalid read block");
+            return;
+        }
+        break;
+    case DM_OP_FILE_READ_END:
+        response_length = end_read_transfer(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "incomplete read transfer");
+            return;
+        }
+        break;
+    case DM_OP_FILE_WRITE_BEGIN:
+        response_length = begin_file_write(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 7, "file write denied or invalid");
+            return;
+        }
+        break;
+    case DM_OP_FILE_WRITE_BLOCK:
+        response_length = write_transfer_block(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "invalid write block");
+            return;
+        }
+        break;
+    case DM_OP_FILE_WRITE_COMMIT:
+        response_length = commit_file_write(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 11, "upload integrity or commit failed");
+            return;
+        }
+        break;
+    case DM_OP_FILE_ABORT:
+        response_length = abort_transfer(payload, length);
+        if (response_length == 0xFFFF) {
+            send_error(opcode, id, 6, "invalid transfer");
+            return;
+        }
+        break;
+    case DM_OP_GRAPHICS_BEGIN:
+        if (length || !(response_length = begin_graphics(screen_buffer))) {
+            send_error(opcode, id, 5, "unsupported graphics mode");
+            return;
+        }
+        break;
+    case DM_OP_GRAPHICS_BLOCK:
+        response_length = read_graphics_block(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "invalid graphics block");
+            return;
+        }
+        break;
+    case DM_OP_GRAPHICS_END:
+        response_length = end_read_transfer(payload, length, screen_buffer);
+        if (!response_length) {
+            send_error(opcode, id, 6, "incomplete graphics transfer");
+            return;
+        }
+        break;
+#endif
     default:
         send_error(opcode, id, 5, "unsupported operation");
         return;
@@ -429,18 +797,28 @@ static void send_response(
 )
 {
     dm_u8 fragment_count;
+#ifndef RA_TSR
     dm_u8 index;
+#endif
 
-    fragment_count = (dm_u8)((length + DM_MAX_FRAGMENT_PAYLOAD - 1)
-        / DM_MAX_FRAGMENT_PAYLOAD);
+    fragment_count = (dm_u8)((length + RESPONSE_FRAGMENT_PAYLOAD - 1)
+        / RESPONSE_FRAGMENT_PAYLOAD);
     if (!fragment_count)
         fragment_count = 1;
     if (fragment_count > MAX_RESPONSE_FRAGMENTS)
         return;
     session.response_count = fragment_count;
+#ifdef RA_TSR
+    if (payload != screen_buffer)
+        memcpy(screen_buffer, payload, length);
+    session.response_kind = kind;
+    session.response_opcode = opcode;
+    session.response_request_id = id;
+    session.response_payload_length = length;
+#else
     for (index = 0; index < fragment_count; ++index) {
         dm_packet packet;
-        dm_u16 offset = (dm_u16)index * DM_MAX_FRAGMENT_PAYLOAD;
+        dm_u16 offset = (dm_u16)index * RESPONSE_FRAGMENT_PAYLOAD;
         dm_u16 remaining = length - offset;
 
         packet.kind = kind;
@@ -450,8 +828,8 @@ static void send_response(
         packet.request_id = id;
         packet.fragment_index = index;
         packet.fragment_count = fragment_count;
-        packet.payload_length = remaining > DM_MAX_FRAGMENT_PAYLOAD
-            ? DM_MAX_FRAGMENT_PAYLOAD : remaining;
+        packet.payload_length = remaining > RESPONSE_FRAGMENT_PAYLOAD
+            ? RESPONSE_FRAGMENT_PAYLOAD : remaining;
         packet.payload = payload + offset;
         if (dm_packet_encode(
             &packet,
@@ -462,6 +840,7 @@ static void send_response(
         ) != DM_OK)
             return;
     }
+#endif
     session.last_request_id = id;
     session.has_last_request = 1;
     resend_cached();
@@ -481,6 +860,10 @@ static void send_error(dm_u8 opcode, dm_u16 id, dm_u16 code, const char *message
 
 static void resend_cached(void)
 {
+#ifdef RA_TSR
+    session.response_next = 0;
+    session.response_pending = session.response_count != 0;
+#else
     dm_u8 index;
 
     for (index = 0; index < session.response_count; ++index) {
@@ -490,26 +873,42 @@ static void resend_cached(void)
             session.response_lengths[index]
         );
     }
+#endif
 }
 
 static dm_u16 build_status(dm_u8 *output)
 {
+#ifndef RA_TSR
     union REGS input;
     union REGS result;
+#endif
     volatile dm_u16 __far *memory_kb =
         (volatile dm_u16 __far *)MK_FP(0x40, 0x13);
     dm_u32 current_ticks;
     dm_u32 elapsed_ticks;
 
+#ifndef RA_TSR
     memset(&input, 0, sizeof(input));
     input.h.ah = 0x30;
     intdos(&input, &result);
+#endif
     output[0] = 0;
-    output[1] = 1;
+    output[1] =
+#ifdef RA_TSR
+        2;
+    output[2] = cached_dos_major;
+    output[3] = cached_dos_minor;
+#else
+        1;
     output[2] = result.h.al;
     output[3] = result.h.ah;
+#endif
     output[4] = 0;
+#ifdef RA_TSR
+    output[5] = 2;
+#else
     output[5] = PHASE_AGENT_SHELL_READY;
+#endif
     dm_put_u16(output + 6, *memory_kb);
     current_ticks = read_bios_ticks();
     if (current_ticks >= agent_start_ticks)
@@ -525,17 +924,31 @@ static dm_u16 build_capabilities(dm_u8 *output)
     volatile dm_u16 __far *columns =
         (volatile dm_u16 __far *)MK_FP(0x40, 0x4A);
 
-    dm_put_u32(output, CAP_STATUS | CAP_TEXT | CAP_KEYBOARD);
+    dm_put_u32(
+        output,
+        CAP_STATUS | CAP_TEXT | CAP_KEYBOARD
+#ifdef RA_TSR
+        | CAP_GRAPHICS
+        | (allow_file_read ? CAP_FILESYSTEM_READ : 0)
+        | (allow_file_write ? CAP_FILESYSTEM_WRITE : 0)
+#endif
+    );
     output[4] = (dm_u8)(*columns > 80 ? 80 : *columns);
     output[5] = 25;
-    output[6] = detect_adapter(
+    output[6] =
+#ifdef RA_TSR
+        cached_adapter;
+#else
+        detect_adapter(
         *(volatile dm_u8 __far *)MK_FP(0x40, 0x49)
     );
+#endif
     dm_put_u16(output + 7, DM_MAX_FRAGMENT_PAYLOAD);
     dm_put_u16(output + 9, 15);
     return 11;
 }
 
+#ifndef RA_TSR
 static dm_u16 capture_screen(dm_u8 *output)
 {
     volatile dm_u8 __far *video_mode =
@@ -569,7 +982,12 @@ static dm_u16 capture_screen(dm_u8 *output)
     output[5] = (dm_u8)cursor;
     output[6] = (dm_u8)(*cursor_shape >> 8);
     output[7] = (dm_u8)*cursor_shape;
-    output[8] = detect_adapter(*video_mode);
+    output[8] =
+#ifdef RA_TSR
+        cached_adapter;
+#else
+        detect_adapter(*video_mode);
+#endif
     dm_put_u16(output + 9, 437);
     dm_put_u16(output + 11, ++generation);
     video = (const dm_u8 __far *)MK_FP(
@@ -581,6 +999,68 @@ static dm_u16 capture_screen(dm_u8 *output)
         output[13 + index] = video[index];
     return 13 + cells;
 }
+
+#else
+static dm_u16 prepare_text_capture(void)
+{
+    volatile dm_u8 __far *video_mode =
+        (volatile dm_u8 __far *)MK_FP(0x40, 0x49);
+    volatile dm_u16 __far *columns =
+        (volatile dm_u16 __far *)MK_FP(0x40, 0x4A);
+    volatile dm_u16 __far *page_offset =
+        (volatile dm_u16 __far *)MK_FP(0x40, 0x4E);
+    volatile dm_u16 __far *cursor_positions =
+        (volatile dm_u16 __far *)MK_FP(0x40, 0x50);
+    volatile dm_u16 __far *cursor_shape =
+        (volatile dm_u16 __far *)MK_FP(0x40, 0x60);
+    volatile dm_u8 __far *active_page =
+        (volatile dm_u8 __far *)MK_FP(0x40, 0x62);
+    static dm_u16 generation;
+    dm_u8 cols = (dm_u8)(*columns > 80 ? 80 : *columns);
+    dm_u8 page = *active_page <= 7 ? *active_page : 0;
+    dm_u16 cursor;
+
+    if (!cols)
+        cols = 80;
+    cursor = cursor_positions[page];
+    text_capture_header[0] = cols;
+    text_capture_header[1] = 25;
+    text_capture_header[2] = *video_mode;
+    text_capture_header[3] = page;
+    text_capture_header[4] = (dm_u8)(cursor >> 8);
+    text_capture_header[5] = (dm_u8)cursor;
+    text_capture_header[6] = (dm_u8)(*cursor_shape >> 8);
+    text_capture_header[7] = (dm_u8)*cursor_shape;
+    text_capture_header[8] = cached_adapter;
+    dm_put_u16(text_capture_header + 9, 437);
+    dm_put_u16(text_capture_header + 11, ++generation);
+    text_capture_segment = *video_mode == 7 ? 0xB000 : 0xB800;
+    text_capture_offset = *page_offset;
+    text_capture_cells = (dm_u16)cols * 25 * 2;
+    return 13 + text_capture_cells;
+}
+
+static void fill_text_capture_fragment(
+    dm_u16 offset,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    dm_u16 index;
+
+    for (index = 0; index < length; ++index) {
+        dm_u16 position = offset + index;
+
+        if (position < sizeof(text_capture_header))
+            output[index] = text_capture_header[position];
+        else
+            output[index] = *(const dm_u8 __far *)MK_FP(
+                text_capture_segment,
+                text_capture_offset + position - sizeof(text_capture_header)
+            );
+    }
+}
+#endif
 
 static dm_u16 inject_keys(const dm_u8 *payload, dm_u16 length, dm_u8 *output)
 {
@@ -608,18 +1088,26 @@ static dm_u16 inject_keys(const dm_u8 *payload, dm_u16 length, dm_u8 *output)
         if (!bios_queue_word(word))
             break;
         ++accepted_text;
+#ifndef RA_TSR
         process_shell_keyboard();
+#endif
+#ifndef RA_TSR
         if (inter_key_delay)
             delay(inter_key_delay);
+#endif
     }
     for (index = 0; index < key_count; ++index) {
         dm_u16 word = named_key_word(payload[5 + text_length + index]);
         if (!word || !bios_queue_word(word))
             break;
         ++accepted_keys;
+#ifndef RA_TSR
         process_shell_keyboard();
+#endif
+#ifndef RA_TSR
         if (inter_key_delay)
             delay(inter_key_delay);
+#endif
     }
     dm_put_u16(output, accepted_text);
     output[2] = accepted_keys;
@@ -629,6 +1117,9 @@ static dm_u16 inject_keys(const dm_u8 *payload, dm_u16 length, dm_u8 *output)
 
 static int bios_queue_word(dm_u16 word)
 {
+#ifdef RA_TSR
+    return ratsr_bios_queue_word(word);
+#else
     volatile dm_u16 __far *head =
         (volatile dm_u16 __far *)MK_FP(0x40, 0x1A);
     volatile dm_u16 __far *tail =
@@ -638,6 +1129,11 @@ static int bios_queue_word(dm_u16 word)
 
     _disable();
     current = *tail;
+    if (current < 0x1E || current >= 0x3E || (current & 1)
+        || *head < 0x1E || *head >= 0x3E || (*head & 1)) {
+        _enable();
+        return 0;
+    }
     next = current + 2;
     if (next >= 0x3E)
         next = 0x1E;
@@ -649,6 +1145,7 @@ static int bios_queue_word(dm_u16 word)
     *tail = next;
     _enable();
     return 1;
+#endif
 }
 
 static dm_u8 ascii_scan(dm_u8 value)
@@ -701,6 +1198,7 @@ static dm_u16 named_key_word(dm_u8 key)
     return values[key];
 }
 
+#ifndef RA_TSR
 static void process_shell_keyboard(void)
 {
     static char command[128];
@@ -744,6 +1242,7 @@ static void print_prompt(void)
     fputs("RAGENT> ", stdout);
     fflush(stdout);
 }
+#endif
 
 static dm_u32 read_bios_ticks(void)
 {
@@ -782,3 +1281,690 @@ static dm_u8 detect_adapter(dm_u8 video_mode)
     }
     return video_mode == 7 ? ADAPTER_MDA : ADAPTER_CGA;
 }
+
+#ifdef RA_TSR
+void ratsr_idle_worker(dm_u16 dos_idle)
+{
+    dm_udp_datagram datagram;
+
+    if (!ratsr_enabled)
+        return;
+    if (!dos_idle)
+        ++ratsr_ticks;
+    if (session.active
+        && (dm_u16)(ratsr_ticks - session.last_activity_tick)
+            >= SESSION_IDLE_TICKS) {
+        session.active = 0;
+        session.response_pending = 0;
+        session.has_last_request = 0;
+    }
+    if (!session.active
+        && transfer_kind != TRANSFER_NONE
+        && dos_idle
+        && !*critical_error_flag)
+        close_transfer(1);
+    if (!session.active
+        && (dm_u16)(ratsr_ticks - discovery_last_tick)
+            >= DISCOVERY_INTERVAL_TICKS) {
+        discovery_last_tick = ratsr_ticks;
+        send_discovery();
+    }
+    if (session.response_pending) {
+        dm_packet packet;
+        dm_u16 offset =
+            (dm_u16)session.response_next * RESPONSE_FRAGMENT_PAYLOAD;
+        dm_u16 remaining = session.response_payload_length - offset;
+        int encode_result;
+
+        packet.kind = session.response_kind;
+        packet.opcode = session.response_opcode;
+        packet.flags = 0;
+        packet.session_id = session.id;
+        packet.request_id = session.response_request_id;
+        packet.fragment_index = session.response_next;
+        packet.fragment_count = session.response_count;
+        packet.payload_length = remaining > RESPONSE_FRAGMENT_PAYLOAD
+            ? RESPONSE_FRAGMENT_PAYLOAD : remaining;
+        if (session.response_opcode == DM_OP_CAPTURE_TEXT_SCREEN) {
+            fill_text_capture_fragment(
+                offset,
+                packet.payload_length,
+                screen_buffer
+            );
+            packet.payload = screen_buffer;
+        } else {
+            packet.payload = screen_buffer + offset;
+        }
+        encode_result = dm_packet_encode(
+            &packet,
+            session.key,
+            session.responses[0],
+            sizeof(session.responses[0]),
+            &session.response_lengths[0]
+        );
+        ratsr_last_protocol_result = encode_result;
+        if (encode_result != DM_OK) {
+            session.response_pending = 0;
+            return;
+        }
+        ratsr_last_send_result = dm_net_send(
+            &session.peer,
+            session.responses[0],
+            session.response_lengths[0]
+        );
+        ++session.response_next;
+        if (session.response_next >= session.response_count)
+            session.response_pending = 0;
+        return;
+    }
+    if (dm_net_poll(&datagram)) {
+        if (datagram.payload_length >= DM_HEADER_SIZE
+            && datagram.payload[4] >= DM_OP_FILE_READ_BEGIN
+            && datagram.payload[4] <= DM_OP_FILE_ABORT
+            && (!dos_idle || *critical_error_flag))
+            return;
+        process_datagram(&datagram);
+        dm_net_release();
+    }
+}
+
+void ratsr_prepare_unload(void)
+{
+    ratsr_enabled = 0;
+    dm_net_close();
+}
+
+static int uninstall_tsr(void)
+{
+    union REGPACK registers;
+    void (__interrupt __far *current1c)(void);
+    void (__interrupt __far *current28)(void);
+    void (__interrupt __far *current2f)(void);
+    dm_u16 resident_psp;
+    dm_u16 old1c_offset;
+    dm_u16 old1c_segment;
+    dm_u16 old28_offset;
+    dm_u16 old28_segment;
+    dm_u16 old2f_offset;
+    dm_u16 old2f_segment;
+
+    memset(&registers, 0, sizeof(registers));
+    registers.w.ax = TSR_MULTIPLEX;
+    registers.w.bx = 0;
+    intr(0x2F, &registers);
+    if (registers.w.ax != TSR_REPLY) {
+        puts("RA-TSR: not installed");
+        return 1;
+    }
+    resident_psp = registers.w.bx;
+    current1c = _dos_getvect(0x1C);
+    current28 = _dos_getvect(0x28);
+    current2f = _dos_getvect(0x2F);
+    if (_FP_OFF(current1c) != registers.w.cx
+        || _FP_SEG(current1c) != registers.w.dx
+        || _FP_OFF(current2f) != registers.w.si
+        || _FP_SEG(current2f) != registers.w.di) {
+        puts("RA-TSR: cannot unload; another TSR is above it");
+        return 2;
+    }
+    memset(&registers, 0, sizeof(registers));
+    registers.w.ax = TSR_MULTIPLEX;
+    registers.w.bx = 3;
+    intr(0x2F, &registers);
+    if (registers.w.ax != TSR_REPLY
+        || _FP_OFF(current28) != registers.w.cx
+        || _FP_SEG(current28) != registers.w.dx) {
+        puts("RA-TSR: cannot unload; another TSR is above it");
+        return 2;
+    }
+    old28_offset = registers.w.si;
+    old28_segment = registers.w.di;
+    memset(&registers, 0, sizeof(registers));
+    registers.w.ax = TSR_MULTIPLEX;
+    registers.w.bx = 1;
+    intr(0x2F, &registers);
+    if (registers.w.ax != TSR_REPLY) {
+        if (registers.w.bx == 1)
+            puts("RA-TSR: active transfer; abort it or wait for idle cleanup");
+        else
+            puts("RA-TSR: resident shutdown failed");
+        return 3;
+    }
+    old1c_offset = registers.w.cx;
+    old1c_segment = registers.w.dx;
+    old2f_offset = registers.w.si;
+    old2f_segment = registers.w.di;
+    _dos_setvect(
+        0x1C,
+        (void (__interrupt __far *)(void))MK_FP(old1c_segment, old1c_offset)
+    );
+    _dos_setvect(
+        0x28,
+        (void (__interrupt __far *)(void))MK_FP(old28_segment, old28_offset)
+    );
+    _dos_setvect(
+        0x2F,
+        (void (__interrupt __far *)(void))MK_FP(old2f_segment, old2f_offset)
+    );
+    if (_dos_freemem(resident_psp) != 0) {
+        puts("RA-TSR: vectors restored but resident memory could not be freed");
+        return 4;
+    }
+    puts("RA-TSR unloaded.");
+    return 0;
+}
+
+static void send_discovery(void)
+{
+    dm_u8 payload[20 + TSR_NAME_MAX + 2];
+    const dm_u8 *address = dm_net_address();
+    dm_u16 name_length = (dm_u16)strlen(agent_name);
+    dm_u32 capabilities = CAP_STATUS | CAP_TEXT | CAP_KEYBOARD | CAP_GRAPHICS
+        | (allow_file_read ? CAP_FILESYSTEM_READ : 0)
+        | (allow_file_write ? CAP_FILESYSTEM_WRITE : 0);
+    dm_u16 length = 20 + name_length;
+
+    payload[0] = 'D';
+    payload[1] = 'M';
+    payload[2] = 'D';
+    payload[3] = '2';
+    payload[4] = 1;
+    payload[5] = DM_VERSION;
+    payload[6] = discovery_open_mode ? 1 : 0;
+    payload[7] = (dm_u8)name_length;
+    dm_put_u16(payload + 8, advertised_port);
+    dm_put_u32(payload + 10, capabilities);
+    memcpy(payload + 14, address, 6);
+    memcpy(payload + 20, agent_name, name_length);
+    dm_put_u16(payload + length, dm_crc16_ccitt(payload, length));
+    dm_net_broadcast(DISCOVERY_PORT, payload, length + 2);
+}
+
+static int configure_tsr(int argc, char **argv)
+{
+    char current[TSR_PATH_MAX + 1];
+    const char *root = argc >= 6 ? argv[5] : "C:\\RATSR";
+    const char *access = argc >= 7 ? argv[6] : "-";
+    const char *name = argc >= 8 ? argv[7] : "DOS-PC";
+    size_t length = strlen(root);
+    size_t name_length = strlen(name);
+    size_t index;
+
+    if (!length || length > TSR_PATH_MAX
+        || !name_length || name_length > TSR_NAME_MAX
+        || !getcwd(current, sizeof(current)))
+        return -1;
+    for (index = 0; index < name_length; ++index) {
+        unsigned char value = (unsigned char)name[index];
+
+        if (value < 33 || value > 126)
+            return -1;
+    }
+    strcpy(agent_name, name);
+    strcpy(sandbox_root, root);
+    while (length > 3
+        && (sandbox_root[length - 1] == '\\'
+            || sandbox_root[length - 1] == '/'))
+        sandbox_root[--length] = 0;
+    if (chdir(sandbox_root) != 0 || chdir(current) != 0)
+        return -1;
+    allow_file_read = strchr(access, 'R') != 0 || strchr(access, 'r') != 0;
+    allow_file_write = strchr(access, 'W') != 0 || strchr(access, 'w') != 0;
+    if (strcmp(access, "-") != 0
+        && !allow_file_read && !allow_file_write)
+        return -1;
+    return 0;
+}
+
+static void keep_resident(void)
+{
+    dm_u16 environment =
+        *(dm_u16 __far *)MK_FP(_psp, 0x2C);
+    /*
+     * Keep 128 KiB, including the PSP, code/data, receive buffers, and the
+     * private 32 KiB interrupt-worker stack.  This intentionally trades a
+     * little conventional memory for bounded stack headroom on small DOS
+     * systems until the linker-derived resident size is validated across all
+     * supported OpenWatcom memory models.
+     */
+    dm_u16 paragraphs = 0x2000;
+
+    (void)ratsr_resident_end;
+    if (environment)
+        _dos_freemem(environment);
+    _dos_keep(0, paragraphs);
+}
+
+static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length)
+{
+    dm_u16 index;
+    dm_u8 bit;
+
+    crc ^= 0xFFFFFFFFUL;
+    for (index = 0; index < length; ++index) {
+        crc ^= data[index];
+        for (bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320UL : 0);
+    }
+    return crc ^ 0xFFFFFFFFUL;
+}
+
+static int safe_relative_path(const char *path)
+{
+    const char *component = path;
+    const char *cursor;
+    dm_u8 component_length = 0;
+
+    if (!*path || *path == '\\' || *path == '/' || strchr(path, ':'))
+        return 0;
+    for (cursor = path; ; ++cursor) {
+        char value = *cursor;
+
+        if (value == '\\' || value == '/' || value == 0) {
+            if (component_length == 0
+                || (component_length == 1 && component[0] == '.')
+                || (component_length == 2
+                    && component[0] == '.' && component[1] == '.'))
+                return 0;
+            component = cursor + 1;
+            component_length = 0;
+            if (!value)
+                break;
+        } else {
+            if ((unsigned char)value < 32
+                || strchr("\":*+,;<=>?[|]", value)
+                || ++component_length > 12)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+static int build_sandbox_path(
+    const dm_u8 *value,
+    dm_u16 length,
+    char *output
+)
+{
+    char relative[81];
+    size_t root_length = strlen(sandbox_root);
+
+    if (!length || length > 80
+        || root_length + 1 + length > TSR_PATH_MAX)
+        return -1;
+    memcpy(relative, value, length);
+    relative[length] = 0;
+    if (!safe_relative_path(relative))
+        return -1;
+    strcpy(output, sandbox_root);
+    if (root_length
+        && output[root_length - 1] != '\\'
+        && output[root_length - 1] != '/')
+        strcat(output, "\\");
+    strcat(output, relative);
+    return 0;
+}
+
+static void close_transfer(int remove_temporary)
+{
+    if (transfer_handle >= 0)
+        _dos_close(transfer_handle);
+    transfer_handle = -1;
+    if (remove_temporary && transfer_kind == TRANSFER_WRITE)
+        remove(transfer_temp);
+    transfer_kind = TRANSFER_NONE;
+}
+
+static dm_u16 next_transfer_id(void)
+{
+    dm_u16 value = (dm_u16)read_bios_ticks() ^ (dm_u16)(transfer_id + 1);
+
+    if (!value)
+        value = 1;
+    transfer_id = value;
+    return value;
+}
+
+static dm_u16 begin_file_read(const dm_u8 *payload, dm_u16 length, dm_u8 *output)
+{
+    long size;
+
+    if (!allow_file_read || transfer_kind != TRANSFER_NONE
+        || length < 2 || length != (dm_u16)payload[0] + 1
+        || build_sandbox_path(payload + 1, payload[0], transfer_path) != 0
+        || _dos_open(transfer_path, 0, &transfer_handle) != 0)
+        return 0;
+    size = lseek(transfer_handle, 0, SEEK_END);
+    if (size < 0 || (dm_u32)size > TSR_FILE_MAX
+        || lseek(transfer_handle, 0, SEEK_SET) < 0) {
+        close_transfer(0);
+        return 0;
+    }
+    transfer_kind = TRANSFER_READ;
+    transfer_size = (dm_u32)size;
+    transfer_offset = 0;
+    transfer_crc = 0;
+    dm_put_u16(output, next_transfer_id());
+    dm_put_u32(output + 2, transfer_size);
+    return 6;
+}
+
+static dm_u16 read_transfer_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    dm_u16 requested;
+    unsigned received;
+    dm_u32 offset;
+
+    if (transfer_kind != TRANSFER_READ || length != 8
+        || dm_get_u16(payload) != transfer_id)
+        return 0;
+    offset = dm_get_u32(payload + 2);
+    requested = dm_get_u16(payload + 6);
+    if (offset != transfer_offset || !requested
+        || requested > TRANSFER_BLOCK_MAX
+        || offset >= transfer_size)
+        return 0;
+    if ((dm_u32)requested > transfer_size - offset)
+        requested = (dm_u16)(transfer_size - offset);
+    if (_dos_read(transfer_handle, output + 12, requested, &received) != 0
+        || !received)
+        return 0;
+    transfer_crc = crc32_update(transfer_crc, output + 12, received);
+    dm_put_u16(output, transfer_id);
+    dm_put_u32(output + 2, transfer_offset);
+    dm_put_u16(output + 6, (dm_u16)received);
+    dm_put_u32(output + 8, transfer_crc);
+    transfer_offset += received;
+    return (dm_u16)received + 12;
+}
+
+static dm_u16 end_read_transfer(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    if ((transfer_kind != TRANSFER_READ
+            && transfer_kind != TRANSFER_GRAPHICS)
+        || length != 2 || dm_get_u16(payload) != transfer_id
+        || transfer_offset != transfer_size)
+        return 0;
+    dm_put_u32(output, transfer_size);
+    dm_put_u32(output + 4, transfer_crc);
+    close_transfer(0);
+    return 8;
+}
+
+static dm_u16 begin_file_write(const dm_u8 *payload, dm_u16 length, dm_u8 *output)
+{
+    int existing;
+    dm_u8 overwrite;
+    dm_u8 path_length;
+    dm_u16 id;
+
+    if (!allow_file_write || transfer_kind != TRANSFER_NONE || length < 10)
+        return 0;
+    overwrite = payload[0];
+    path_length = payload[9];
+    if (overwrite > 1 || length != (dm_u16)path_length + 10
+        || dm_get_u32(payload + 1) > TSR_FILE_MAX
+        || build_sandbox_path(
+            payload + 10, path_length, transfer_path) != 0)
+        return 0;
+    if (!overwrite && _dos_open(transfer_path, 0, &existing) == 0) {
+        _dos_close(existing);
+        return 0;
+    }
+    id = next_transfer_id();
+    sprintf(transfer_temp, "%s\\RA%04X.TMP", sandbox_root, id);
+    remove(transfer_temp);
+    if (_dos_creatnew(transfer_temp, 0, &transfer_handle) != 0)
+        return 0;
+    transfer_kind = TRANSFER_WRITE;
+    transfer_size = dm_get_u32(payload + 1);
+    transfer_expected_crc = dm_get_u32(payload + 5);
+    transfer_offset = 0;
+    transfer_crc = 0;
+    transfer_overwrite = overwrite;
+    dm_put_u16(output, id);
+    dm_put_u32(output + 2, transfer_size);
+    return 6;
+}
+
+static dm_u16 write_transfer_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    dm_u16 block_length;
+    unsigned written;
+    dm_u32 offset;
+
+    if (transfer_kind != TRANSFER_WRITE || length < 8
+        || dm_get_u16(payload) != transfer_id)
+        return 0;
+    offset = dm_get_u32(payload + 2);
+    block_length = dm_get_u16(payload + 6);
+    if (!block_length || block_length > TRANSFER_BLOCK_MAX
+        || length != block_length + 8 || offset != transfer_offset
+        || offset + block_length > transfer_size
+        || _dos_write(
+            transfer_handle, payload + 8, block_length, &written) != 0
+        || written != block_length)
+        return 0;
+    transfer_crc = crc32_update(transfer_crc, payload + 8, block_length);
+    transfer_offset += block_length;
+    dm_put_u16(output, transfer_id);
+    dm_put_u32(output + 2, offset);
+    dm_put_u16(output + 6, 0);
+    dm_put_u32(output + 8, transfer_crc);
+    return 12;
+}
+
+static dm_u16 commit_file_write(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    int exists;
+    dm_u8 overwrite = transfer_overwrite;
+
+    if (transfer_kind != TRANSFER_WRITE || length != 2
+        || dm_get_u16(payload) != transfer_id
+        || transfer_offset != transfer_size
+        || transfer_crc != transfer_expected_crc)
+        return 0;
+    _dos_close(transfer_handle);
+    transfer_handle = -1;
+    if (_dos_open(transfer_path, 0, &exists) == 0) {
+        _dos_close(exists);
+        if (!overwrite || remove(transfer_path) != 0) {
+            close_transfer(1);
+            return 0;
+        }
+    }
+    if (rename(transfer_temp, transfer_path) != 0) {
+        close_transfer(1);
+        return 0;
+    }
+    dm_put_u32(output, transfer_size);
+    dm_put_u32(output + 4, transfer_crc);
+    transfer_kind = TRANSFER_NONE;
+    return 8;
+}
+
+static dm_u16 abort_transfer(const dm_u8 *payload, dm_u16 length)
+{
+    if (length != 2 || transfer_kind == TRANSFER_NONE
+        || dm_get_u16(payload) != transfer_id)
+        return 0xFFFF;
+    close_transfer(1);
+    return 0;
+}
+
+static dm_u16 begin_graphics(dm_u8 *output)
+{
+    if (transfer_kind != TRANSFER_NONE || !graphics_info())
+        return 0;
+    transfer_kind = TRANSFER_GRAPHICS;
+    transfer_offset = 0;
+    transfer_crc = 0;
+    transfer_size = graphics_bytes_per_plane * graphics_planes;
+    dm_put_u16(output, next_transfer_id());
+    output[2] = cached_adapter;
+    output[3] = graphics_mode;
+    output[4] = graphics_layout;
+    output[5] = graphics_planes;
+    dm_put_u16(output + 6, graphics_width);
+    dm_put_u16(output + 8, graphics_height);
+    dm_put_u32(output + 10, transfer_size);
+    dm_put_u32(output + 14, graphics_bytes_per_plane);
+    return 18;
+}
+
+static int graphics_info(void)
+{
+    graphics_mode = *(volatile dm_u8 __far *)MK_FP(0x40, 0x49);
+    graphics_planes = 1;
+    switch (graphics_mode) {
+    case 4:
+    case 5:
+        graphics_layout = LAYOUT_CGA_2BPP;
+        graphics_width = 320;
+        graphics_height = 200;
+        graphics_bytes_per_plane = 16384;
+        return 1;
+    case 6:
+        graphics_layout = LAYOUT_CGA_1BPP;
+        graphics_width = 640;
+        graphics_height = 200;
+        graphics_bytes_per_plane = 16384;
+        return 1;
+    case 7:
+        if (!(_inp(0x3B8) & 2))
+            return 0;
+        graphics_layout = LAYOUT_HERCULES;
+        graphics_width = 720;
+        graphics_height = 348;
+        graphics_bytes_per_plane = 32768;
+        return 1;
+    case 0x0D:
+        graphics_layout = LAYOUT_PLANAR_4BPP;
+        graphics_planes = 4;
+        graphics_width = 320;
+        graphics_height = 200;
+        graphics_bytes_per_plane = 8000;
+        return 1;
+    case 0x0E:
+        graphics_layout = LAYOUT_PLANAR_4BPP;
+        graphics_planes = 4;
+        graphics_width = 640;
+        graphics_height = 200;
+        graphics_bytes_per_plane = 16000;
+        return 1;
+    case 0x0F:
+        graphics_layout = LAYOUT_PLANAR_1BPP;
+        graphics_width = 640;
+        graphics_height = 350;
+        graphics_bytes_per_plane = 28000;
+        return 1;
+    case 0x10:
+        graphics_layout = LAYOUT_PLANAR_4BPP;
+        graphics_planes = 4;
+        graphics_width = 640;
+        graphics_height = 350;
+        graphics_bytes_per_plane = 28000;
+        return 1;
+    case 0x11:
+        graphics_layout = LAYOUT_PLANAR_1BPP;
+        graphics_width = 640;
+        graphics_height = 480;
+        graphics_bytes_per_plane = 38400;
+        return 1;
+    case 0x12:
+        graphics_layout = LAYOUT_PLANAR_4BPP;
+        graphics_planes = 4;
+        graphics_width = 640;
+        graphics_height = 480;
+        graphics_bytes_per_plane = 38400;
+        return 1;
+    case 0x13:
+        graphics_layout = LAYOUT_PACKED_8BPP;
+        graphics_width = 320;
+        graphics_height = 200;
+        graphics_bytes_per_plane = 64000;
+        return 1;
+    }
+    return 0;
+}
+
+static dm_u16 read_graphics_block(
+    const dm_u8 *payload,
+    dm_u16 length,
+    dm_u8 *output
+)
+{
+    dm_u16 requested;
+    dm_u16 index;
+    dm_u32 offset;
+    dm_u8 old_index = 0;
+    dm_u8 old_plane = 0;
+
+    if (transfer_kind != TRANSFER_GRAPHICS || length != 8
+        || dm_get_u16(payload) != transfer_id)
+        return 0;
+    offset = dm_get_u32(payload + 2);
+    requested = dm_get_u16(payload + 6);
+    if (offset != transfer_offset || !requested
+        || requested > TRANSFER_BLOCK_MAX || offset >= transfer_size)
+        return 0;
+    if ((dm_u32)requested > transfer_size - offset)
+        requested = (dm_u16)(transfer_size - offset);
+    if (graphics_layout == LAYOUT_PLANAR_4BPP
+        || graphics_layout == LAYOUT_PLANAR_1BPP) {
+        old_index = (dm_u8)_inp(0x3CE);
+        _outp(0x3CE, 4);
+        old_plane = (dm_u8)_inp(0x3CF);
+    }
+    for (index = 0; index < requested; ++index) {
+        dm_u32 position = offset + index;
+        dm_u16 memory_offset;
+        dm_u16 segment;
+
+        if (graphics_layout == LAYOUT_PLANAR_4BPP
+            || graphics_layout == LAYOUT_PLANAR_1BPP) {
+            dm_u8 plane = (dm_u8)(position / graphics_bytes_per_plane);
+            _outp(0x3CE, 4);
+            _outp(0x3CF, plane);
+            memory_offset = (dm_u16)(position % graphics_bytes_per_plane);
+            segment = 0xA000;
+        } else {
+            memory_offset = (dm_u16)position;
+            segment = graphics_layout == LAYOUT_HERCULES ? 0xB000 : 0xB800;
+            if (graphics_layout == LAYOUT_PACKED_8BPP)
+                segment = 0xA000;
+        }
+        output[12 + index] =
+            *(const dm_u8 __far *)MK_FP(segment, memory_offset);
+    }
+    if (graphics_layout == LAYOUT_PLANAR_4BPP
+        || graphics_layout == LAYOUT_PLANAR_1BPP) {
+        _outp(0x3CE, 4);
+        _outp(0x3CF, old_plane);
+        _outp(0x3CE, old_index);
+    }
+    transfer_crc = crc32_update(transfer_crc, output + 12, requested);
+    dm_put_u16(output, transfer_id);
+    dm_put_u32(output + 2, transfer_offset);
+    dm_put_u16(output + 6, requested);
+    dm_put_u32(output + 8, transfer_crc);
+    transfer_offset += requested;
+    return requested + 12;
+}
+#endif

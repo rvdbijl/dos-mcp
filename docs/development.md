@@ -17,12 +17,15 @@ src/dos_mcp/
 
 dos/
   agent/ragent.c        foreground operation loop and shell
+                         and conditional resident worker
+  agent/ratsr_hooks.asm resident interrupt hooks and private-stack switch
   agent/dmnet.c         ARP, IPv4, and UDP
   agent/dmpacket.c      packet-driver downcalls and receive state
   agent/dmpacket_rx.asm register-safe receive upcall
   agent/dmproto.c       C protocol implementation
   include/              shared DOS headers
   tests/proto_test.c    cross-language golden vectors
+  tests/tsr_host.c      deterministic resident integration-test host
 
 tests/                  Python unit and integration tests
 tools/                  DOSBox-X test client and harness
@@ -97,7 +100,11 @@ uv run pytest
 - Validate first, then copy.
 - Use unsigned-width typedefs from `dmproto.h`.
 - Treat packet loss and duplicate requests as normal.
-- Keep foreground shell behavior distinct from eventual TSR behavior.
+- Keep foreground shell behavior distinct from resident TSR behavior.
+- Timer/packet hooks may only poll bounded network work or interact with
+  BIOS-owned state. DOS filesystem calls are dispatched only from the
+  reviewed `INT 28h` idle path.
+- Preserve load/query/unload ownership checks when adding resident hooks.
 
 Open Watcom is invoked through `dos/Makefile`; do not rely on an IDE-specific
 project file.
@@ -107,7 +114,7 @@ project file.
 Numeric constants and byte layouts are versioned API. A change that alters an
 encoded vector must either:
 
-- remain backward compatible within version 1 and update both
+- remain backward compatible within version 2 and update both
   implementations; or
 - introduce a new protocol version.
 
@@ -115,7 +122,7 @@ Always update:
 
 - Python encoder/decoder tests;
 - `dos/tests/proto_test.c`;
-- [Protocol version 1](protocol.md);
+- [Protocol version 2](protocol.md);
 - any affected maximums in capabilities and docs.
 
 ## Documentation conventions

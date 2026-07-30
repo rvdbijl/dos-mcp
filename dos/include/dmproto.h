@@ -14,7 +14,7 @@ typedef unsigned long dm_u32;
 
 #define DM_MAGIC_0 'D'
 #define DM_MAGIC_1 'M'
-#define DM_VERSION 1
+#define DM_VERSION 2
 #define DM_HEADER_SIZE 20
 #define DM_MAX_FRAGMENT_PAYLOAD 1024
 #define DM_MAX_FRAGMENTS 32
@@ -30,6 +30,17 @@ typedef unsigned long dm_u32;
 #define DM_OP_SEND_KEYS 5
 #define DM_OP_PING 6
 #define DM_OP_CANCEL 7
+#define DM_OP_FILE_READ_BEGIN 8
+#define DM_OP_FILE_READ_BLOCK 9
+#define DM_OP_FILE_READ_END 10
+#define DM_OP_FILE_WRITE_BEGIN 11
+#define DM_OP_FILE_WRITE_BLOCK 12
+#define DM_OP_FILE_WRITE_COMMIT 13
+#define DM_OP_FILE_ABORT 14
+#define DM_OP_GRAPHICS_BEGIN 15
+#define DM_OP_GRAPHICS_BLOCK 16
+#define DM_OP_GRAPHICS_END 17
+#define DM_OP_MAX DM_OP_GRAPHICS_END
 
 #define DM_OK 0
 #define DM_ERR_TRUNCATED -1

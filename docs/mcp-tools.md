@@ -1,119 +1,109 @@
 # MCP tools
 
-The server exposes four transport-independent tools. Tool names and result
-shapes stay stable whether the backend is Linux PTY, the UDP simulator, or
-the foreground DOS agent.
+The tool surface is transport-independent. Every target operation accepts an
+optional `target` selector. Omit it only when `dos.list_targets` reports one
+record; with multiple systems the server rejects an omitted selector.
 
-Call status and capabilities first. A client should not infer DOS merely
-because the server is named DOS MCP.
+## `dos.list_targets`
+
+Read-only, no arguments. Returns configured/discovered records:
+
+```json
+{
+  "targets": [
+    {
+      "selector": "WORKBENCH-386@acde48444d02",
+      "name": "WORKBENCH-386",
+      "source": "discovery",
+      "host": "192.168.10.38",
+      "port": 21300,
+      "agent_id": "acde48444d02",
+      "protocol_version": 2,
+      "open_mode": false,
+      "connected": false
+    }
+  ]
+}
+```
+
+Discovery metadata is advisory. A target is not authenticated until an
+operation performs `HELLO`.
 
 ## `dos.get_status`
 
-Read-only. Takes no arguments.
+Read-only. Argument: optional `target`.
 
-Example result:
-
-```json
-{
-  "connected": true,
-  "phase": "agent_shell_ready",
-  "backend": "dos-agent",
-  "transport": "packet-driver-udp",
-  "identity": "192.168.10.55:21300",
-  "operating_system": "DOS 5.0",
-  "architecture": "8088",
-  "agent_version": "0.1",
-  "uptime_seconds": 12.64
-}
-```
-
-Phases currently understood by the bridge are:
-
-- `starting`
-- `observe_ready`
-- `agent_shell_ready`
-- `child_running`
-- `dos_busy`
-- `awaiting_approval`
-- `host_unresponsive`
-
-The foreground agent normally reports `agent_shell_ready`. It cannot answer
-while a child command is running because it deliberately remains a
-foreground, non-TSR program.
+Reports connection, phase, backend/transport, identity, OS, architecture,
+agent version, and uptime. RA-TSR normally reports `observe_ready`; foreground
+RAGENT reports `agent_shell_ready`.
 
 ## `dos.get_capabilities`
 
-Read-only. Takes no arguments.
+Read-only. Argument: optional `target`.
 
-Example foreground-agent result:
+Reports only operations enabled by both implementation and local policy.
+Important fields:
 
-```json
-{
-  "backend": "dos-agent",
-  "transport": "packet-driver-udp",
-  "status": true,
-  "text_capture": true,
-  "graphics_capture": [],
-  "keyboard_injection": "bios-queue",
-  "screen_columns": 80,
-  "screen_rows": 25,
-  "max_text_bytes": 4096,
-  "max_keys_per_request": 15,
-  "filesystem_read": false,
-  "filesystem_write": false,
-  "command_execution": false,
-  "memory_read": false,
-  "memory_write": false,
-  "port_read": false,
-  "port_write": false,
-  "reboot": false
-}
-```
+- `text_capture`;
+- `graphics_capture` adapter families;
+- `keyboard_injection`;
+- `filesystem_read` and `filesystem_write`;
+- explicit false values for direct execution, memory/port writes, and reboot.
 
-The `command_execution` field describes a future direct operation. It remains
-false even though entering text and Enter in the foreground shell can run a
-DOS command. Keyboard input is therefore always a meaningful mutation.
+Always query capabilities rather than inferring them from the target name.
 
 ## `dos.capture_screen`
 
-Read-only. Takes no arguments. Returns a complete text-screen snapshot.
+Read-only. Argument: optional `target`.
 
-Important fields:
+Returns a complete fixed-width text screen:
 
-| Field | Meaning |
-|---|---|
-| `kind` | Currently always `text` |
-| `columns`, `rows` | Fixed dimensions of this snapshot |
-| `text` | Exactly one fixed-width Unicode string per row |
-| `attributes` | One DOS/terminal attribute byte per cell |
-| `cursor` | Position, visibility, and optional scanline shape |
-| `generation` | Backend-local monotonically advancing snapshot value |
-| `adapter` | `MDA`, `CGA`, `EGA`, `VGA`, or `linux-pty` |
-| `video_mode` | BIOS mode for DOS, otherwise null |
-| `active_page` | DOS video page |
-| `code_page` | `CP437` for the DOS UDP backend |
-| `blink_enabled` | Current representation flag |
+- `columns`, `rows`, `text`, and per-cell `attributes`;
+- cursor position/shape;
+- generation, adapter, video mode, page, code page, and blink flag.
 
-Rows retain trailing spaces. A client should use the dimensions rather than
-trimming or wrapping rows before coordinate-based interpretation.
+Rows retain trailing spaces. The bridge returns the result only after every
+fragment passes packet identity, CRC, authentication, and dimensional
+validation.
 
-The foreground screen payload is about 4 KB and is fragmented across
-multiple credentialed UDP datagrams (or open-mode datagrams when explicitly
-configured). The bridge exposes a snapshot only
-after every fragment has passed identity, CRC, and MAC validation.
+## `dos.capture_graphics`
+
+Read-only. Argument: optional `target`.
+
+Returns raw framebuffer metadata and strict base64 bytes:
+
+```json
+{
+  "kind": "graphics",
+  "adapter": "VGA",
+  "video_mode": 19,
+  "layout": "packed-8bpp",
+  "width": 320,
+  "height": 200,
+  "planes": 1,
+  "bytes_per_plane": 64000,
+  "size": 64000,
+  "crc32": "1234abcd",
+  "data_base64": "..."
+}
+```
+
+The tool rejects text, unknown, VESA/SVGA, Mode X, and undocumented layouts.
+See [Video capture](video-capture.md).
 
 ## `dos.send_keys`
 
-Mutating and non-idempotent at the MCP level. Arguments:
+Mutating, non-idempotent at the MCP layer:
 
-| Argument | Type | Range | Meaning |
-|---|---|---|---|
-| `text` | string | at most 4096 encoded bytes | Text sent before named keys |
-| `keys` | list of strings | at most 128 entries | Named non-text keys |
-| `inter_key_delay_ms` | integer | 0–1000 | Delay between input items |
-| `settle_ms` | integer | 0–2000 | Bridge wait/collection time after acceptance |
+| Argument | Range |
+|---|---|
+| `target` | optional selector |
+| `text` | at most 4,096 encoded bytes |
+| `keys` | at most 128 named keys |
+| `inter_key_delay_ms` | 0–1,000 |
+| `settle_ms` | 0–2,000 |
 
-Supported named keys:
+Named keys:
 
 ```text
 ENTER ESC TAB BACKSPACE
@@ -122,47 +112,45 @@ F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12
 CTRL_C CTRL_D
 ```
 
-Names are case-insensitive.
+Result reports accepted text bytes, named keys, and generation. Acceptance is
+queue insertion, not proof of application behavior. Capture before and after.
 
-Example call arguments:
+The UDP layer retries an identical request ID and the target reuses its
+completed receipt instead of repeating a mutation.
 
-```json
-{
-  "text": "DIR",
-  "keys": ["ENTER"],
-  "inter_key_delay_ms": 5,
-  "settle_ms": 500
-}
-```
+## `dos.download_file`
 
-Example result:
+Read-only from the target, but disabled by default.
 
-```json
-{
-  "accepted_text_bytes": 3,
-  "accepted_keys": 1,
-  "keys": ["ENTER"],
-  "screen_generation": 7
-}
-```
+Arguments:
 
-Acceptance means the backend accepted the input, not that the application
-produced the expected effect. Capture the screen afterward and verify it.
+- `target`: optional selector;
+- `path`: 1–80 byte path relative to the target file root.
 
-The UDP protocol gives each keyboard request a request ID and caches the last
-completed response. If a response is lost, the bridge retries the same
-request and the target returns the cached receipt instead of injecting the
-keys again.
+Result contains path, size, CRC32, and strict base64 content. Maximum modern
+backend size is 1 MiB. RA-TSR also requires load-time `R` or `RW`.
 
-## Recommended interaction pattern
+## `dos.upload_file`
 
-For a command-oriented foreground session:
+Mutating and marked destructive.
 
-1. capture the current screen;
-2. confirm the prompt and target identity;
-3. send a short text sequence plus `ENTER`;
-4. wait an appropriate settle interval;
-5. capture the screen again;
-6. verify the output before issuing another mutation.
+Arguments:
 
-Avoid sending speculative input when the phase or screen is unexpected.
+- `target`: optional selector;
+- `path`: relative bounded target path;
+- `content_base64`: strict RFC 4648 content, decoded size ≤1 MiB;
+- `overwrite`: explicit permission to replace an existing file.
+
+The bridge and RA-TSR must both enable writes. RA-TSR writes a temporary,
+verifies declared size/CRC, and renames on commit. Result reports path, size,
+and CRC32.
+
+## Recommended operating sequence
+
+1. call `dos.list_targets`;
+2. choose and retain the exact selector;
+3. call status and capabilities;
+4. capture the relevant text/graphics state;
+5. perform the smallest intended mutation;
+6. recapture and verify;
+7. stop on unexpected phase, target, screen, receipt, or checksum.

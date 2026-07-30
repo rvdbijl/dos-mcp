@@ -67,10 +67,12 @@ server process's environment. Exact configuration syntax is client-specific.
 
 After connection:
 
-1. call `dos.get_status`;
-2. call `dos.get_capabilities`;
-3. call `dos.capture_screen`;
-4. only then use `dos.send_keys`.
+1. call `dos.list_targets`;
+2. select a target;
+3. call `dos.get_status`;
+4. call `dos.get_capabilities`;
+5. call `dos.capture_screen`;
+6. only then use a mutation.
 
 The tool details and result shapes are in [MCP tools](mcp-tools.md).
 
@@ -130,6 +132,37 @@ authenticates packets but does not encrypt screen or keyboard data, so use a
 trusted private network. Omitting the credential on both sides enables
 unauthenticated open mode for isolated testing. Full packet-driver, DOSBox-X,
 and emergency-stop instructions are in [the DOS guide](../dos/README.md).
+
+## Option D: resident DOS agent
+
+Create a dedicated transfer directory and load RA-TSR with a visible name:
+
+```dos
+MD C:\REMOTE
+RA-TSR pass:MyUniqueLabPassphrase 192.168.10.55 21300 0x60 C:\REMOTE RW WORKBENCH-386
+```
+
+Connect directly, adding bridge file policy when wanted:
+
+```bash
+DOS_MCP_TARGET=192.168.10.55 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
+DOS_MCP_ALLOW_FILE_READ=1 \
+DOS_MCP_ALLOW_FILE_WRITE=1 \
+uv run dos-mcp
+```
+
+Or listen for disconnected resident systems:
+
+```bash
+DOS_MCP_DISCOVERY=1 \
+DOS_MCP_PASSWORD=MyUniqueLabPassphrase \
+uv run dos-mcp
+```
+
+Call `dos.list_targets` and use the returned selector. With multiple targets,
+the bridge requires `target` on every operation. See [RA-TSR](tsr.md) and
+[Discovery](discovery.md).
 
 ## Verify the checkout
 
