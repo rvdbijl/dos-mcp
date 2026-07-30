@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dos-mcp"
+version = "0.1.0"
+description = "MCP bridge for safely operating DOS computers"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.0,<3",
+]
+
+[project.scripts]
+dos-mcp = "dos_mcp.server:main"
+dos-mcp-simulator = "dos_mcp.simulator:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<9",
+    "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dos_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
