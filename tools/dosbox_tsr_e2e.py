@@ -6,7 +6,13 @@ import time
 from contextlib import suppress
 
 from dos_mcp.backends.udp import AgentOperationError, UdpBackend
-from dos_mcp.protocol import Opcode, ResidentDiagnosticFlag, derive_password_key
+from dos_mcp.protocol import (
+    GraphicsBeginResponse,
+    Opcode,
+    ResidentDiagnosticFlag,
+    TransferEndRequest,
+    derive_password_key,
+)
 
 
 def connect(deadline: float) -> UdpBackend:
@@ -116,8 +122,19 @@ def main() -> None:
         if not restored.flags & ResidentDiagnosticFlag.OWNS_INT1C:
             raise AssertionError("INT 1Ch was not restored after watchdog test")
 
+        type_all(backend, "NO28", enter=True)
         type_all(backend, "GFX13", enter=True)
         time.sleep(0.2)
+        begun = GraphicsBeginResponse.decode(
+            backend._request(Opcode.GRAPHICS_BEGIN)
+        )
+        if backend._request(
+            Opcode.FILE_ABORT,
+            TransferEndRequest(begun.transfer_id).encode(),
+        ):
+            raise AssertionError("graphics abort returned an unexpected payload")
+        if backend._request(Opcode.PING, b"after-abort") != b"after-abort":
+            raise AssertionError("graphics abort wedged the receive queue")
         graphics = backend.capture_graphics()
         expected_graphics = bytes(
             (index ^ (index >> 8)) & 0xFF for index in range(64000)
@@ -131,6 +148,7 @@ def main() -> None:
         ):
             raise AssertionError("VGA mode 13h framebuffer capture failed")
         type_all(backend, "TEXT", enter=True)
+        type_all(backend, "YES28", enter=True)
         time.sleep(0.2)
 
         try:

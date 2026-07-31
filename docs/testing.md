@@ -159,11 +159,13 @@ The resident harness:
 7. replaces `INT 1Ch` without chaining, verifies UDP service and increasing
    `INT 08h` fallback counters, then restores `INT 1Ch`;
 8. switches to VGA mode 13h and fills all 64,000 bytes with a pattern;
-9. downloads the raw graphics transfer and compares every byte;
-10. verifies `ALL` rejects a relative path, then uploads/downloads 2,560
+9. suppresses `INT 28h`, aborts one graphics transaction, and verifies that
+   networking remains responsive before downloading the raw framebuffer;
+10. compares every graphics byte and restores DOS-idle calls;
+11. verifies `ALL` rejects a relative path, then uploads/downloads 2,560
    binary bytes through an absolute `C:\REMOTE` path and verifies the round
    trip;
-11. exits the fixture and verifies `RA-TSR /U` restored vectors/freed memory.
+12. exits the fixture and verifies `RA-TSR /U` restored vectors/freed memory.
 
 Expected output:
 

@@ -1597,6 +1597,8 @@ void ratsr_idle_worker(dm_u16 dos_idle)
         if (datagram.payload_length >= DM_HEADER_SIZE
             && datagram.payload[4] >= DM_OP_FILE_READ_BEGIN
             && datagram.payload[4] <= DM_OP_FILE_ABORT
+            && !(datagram.payload[4] == DM_OP_FILE_ABORT
+                && transfer_kind == TRANSFER_GRAPHICS)
             && (!dos_idle || *critical_error_flag))
             return;
         process_datagram(&datagram);

@@ -95,6 +95,7 @@ middle of a chain would be unsafe.
 | Keyboard insertion | direct validated BIOS ring update with preserved flags |
 | Packet response | at most one encoded/sent fragment per entry |
 | Graphics | explicit ≤900-byte sequential reads; plane registers restored |
+| Abort graphics transfer | timer-safe; no DOS handle or filesystem state |
 | File read/write | only from `INT 28h`, with critical-error flag clear |
 | Discovery | one bounded TTL-1 broadcast, only disconnected and interval due |
 | Allocation | forbidden while resident |

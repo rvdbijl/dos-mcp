@@ -177,6 +177,11 @@ Run `RA-TSR` without arguments after returning to DOS and compare its counters:
 - stationary `int08` and `int1c` means interrupts/IRQ0 were masked or another
   program replaced the hardware timer without chaining.
 
+Graphics abort is processed from the timer context because it owns no DOS
+handle. File operations, including aborting an upload, remain queued until
+`INT 28h`; applications that never yield DOS idle can therefore delay those
+operations by design.
+
 The PIC bytes are snapshots, not proof of which physical IRQ the packet driver
 uses. Record the adapter IRQ separately. A software packet-driver vector such
 as `60h` is not the NIC's hardware IRQ.

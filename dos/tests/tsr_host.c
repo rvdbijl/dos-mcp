@@ -25,6 +25,7 @@ int main(void)
     char command[128];
     unsigned length = 0;
     int graphics_mode = 0;
+    int issue_dos_idle = 1;
 
     puts("RA-TSR integration host");
     fputs("TSRHOST> ", stdout);
@@ -41,8 +42,10 @@ int main(void)
              * Cooperate like a DOS console wait: resident filesystem calls
              * are serviced only through the chained DOS-idle interrupt.
              */
-            memset(&input, 0, sizeof(input));
-            int86(0x28, &input, &output);
+            if (issue_dos_idle) {
+                memset(&input, 0, sizeof(input));
+                int86(0x28, &input, &output);
+            }
             continue;
         }
         key = _bios_keybrd(_KEYBRD_READ);
@@ -62,6 +65,10 @@ int main(void)
                     _dos_setvect(0x1C, saved_int1c);
                     saved_int1c = 0;
                 }
+            } else if (stricmp(command, "NO28") == 0) {
+                issue_dos_idle = 0;
+            } else if (stricmp(command, "YES28") == 0) {
+                issue_dos_idle = 1;
             } else if (stricmp(command, "GFX13") == 0) {
                 union REGS input;
                 union REGS output;
