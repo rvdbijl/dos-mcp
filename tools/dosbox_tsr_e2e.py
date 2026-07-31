@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import socket
 import time
 from contextlib import suppress
 
 from dos_mcp.backends.udp import AgentOperationError, UdpBackend
 from dos_mcp.protocol import (
     GraphicsBeginResponse,
+    MessageKind,
     Opcode,
+    Packet,
     ResidentDiagnosticFlag,
     TransferEndRequest,
     derive_password_key,
@@ -77,6 +80,25 @@ def check_memory(backend: UdpBackend, label: str) -> None:
     )
 
 
+def send_invalid_deferred_packet(backend: UdpBackend) -> None:
+    """Ensure an unauthenticated file opcode cannot occupy the RX slot."""
+    packet = Packet(
+        kind=MessageKind.REQUEST,
+        opcode=Opcode.FILE_WRITE_BLOCK,
+        session_id=1,
+        request_id=1,
+        fragment_index=0,
+        fragment_count=1,
+        payload=b"",
+    ).encode(bytes(16))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(packet, backend.target)
+    finally:
+        sock.close()
+    time.sleep(0.1)
+
+
 def main() -> None:
     backend = connect(time.monotonic() + 30)
     backend._timeout = 5.0
@@ -100,6 +122,9 @@ def main() -> None:
         if diagnostics.flags & expected_vectors != expected_vectors:
             raise AssertionError("TSR does not own all installed interrupt vectors")
         check_memory(backend, "startup")
+        send_invalid_deferred_packet(backend)
+        if backend._request(Opcode.PING, b"after-invalid") != b"after-invalid":
+            raise AssertionError("invalid file packet occupied the receive slot")
         backend.send_keys(
             text="",
             keys=(),

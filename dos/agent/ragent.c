@@ -231,6 +231,9 @@ static int is_hex_key(const char *text);
 static int request_is_newer(dm_u16 candidate, dm_u16 previous);
 static dm_u32 make_nonce(void);
 static void process_datagram(const dm_udp_datagram *datagram);
+#ifdef RA_TSR
+static int validate_deferred_datagram(const dm_udp_datagram *datagram);
+#endif
 static void process_hello(const dm_packet *packet, const dm_net_peer *peer);
 static void process_request(
     dm_u8 opcode,
@@ -748,6 +751,35 @@ static void process_datagram(const dm_udp_datagram *datagram)
         + request_fragment_lengths[request_fragment_count - 1];
     process_request(request_opcode, request_id, request_buffer, final_length);
 }
+
+#ifdef RA_TSR
+/*
+ * A file opcode may need to remain queued until INT 28h, but the opcode byte
+ * is untrusted until the whole packet has passed CRC and MAC validation.  An
+ * invalid packet must never occupy the packet driver's single receive slot.
+ */
+static int validate_deferred_datagram(const dm_udp_datagram *datagram)
+{
+    dm_packet packet;
+    const dm_u8 *key = base_key;
+    int result;
+
+    if (datagram->payload_length >= DM_HEADER_SIZE
+        && datagram->payload[4] != DM_OP_HELLO) {
+        if (!session.active)
+            return DM_ERR_AUTH;
+        key = session.key;
+    }
+    result = dm_packet_decode(
+        datagram->payload,
+        datagram->payload_length,
+        key,
+        &packet
+    );
+    ratsr_last_protocol_result = result;
+    return result;
+}
+#endif
 
 static void process_hello(const dm_packet *packet, const dm_net_peer *peer)
 {
@@ -1693,6 +1725,12 @@ void ratsr_idle_worker(dm_u16 dos_idle)
             && !(datagram.payload[4] == DM_OP_FILE_ABORT
                 && transfer_kind == TRANSFER_GRAPHICS);
 
+        if (dos_operation
+            && (!dos_idle || *critical_error_flag)
+            && validate_deferred_datagram(&datagram) != DM_OK) {
+            dm_net_release();
+            return;
+        }
         if (dos_operation && (!dos_idle || *critical_error_flag))
             return;
         process_datagram(&datagram);

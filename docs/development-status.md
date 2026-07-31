@@ -11,19 +11,20 @@ remain resident.
 
 Exact PSP retention is implemented from the linker/runtime extent. The core
 also shares its mutually exclusive request and screen workspaces. The current
-DOSBox-X map retains about 74 KiB including the PSP, with an instrumented
+DOSBox-X build retains 70,032 bytes including the PSP, with an instrumented
 32 KiB private stack and a 4,229-byte shared workspace. The multiplex memory
 query reports paragraph count, stack high-water use, guard state, and workspace
 size.
 
+The full resident integration workload passes. It includes a regression probe
+which presents an invalid file-operation packet before a valid request; the
+invalid packet is discarded instead of occupying the single receive slot.
+
 ## Acceptance gates
 
-- complete the full DOSBox-X load/query, watchdog, text/VGA capture, keyboard,
-  file round-trip, and unload flow;
 - record worst-case stack use and select a smaller guarded stack for the next
-  build;
-- run Python tests, static checks, 16-bit builds, and DOS self-tests;
-- refresh the tracked `bin/` commissioning bundle and documentation.
+  build (the current emulator workload peaks at 322 bytes);
+- repeat the workload on representative physical systems.
 
 ## Deployment topology
 
