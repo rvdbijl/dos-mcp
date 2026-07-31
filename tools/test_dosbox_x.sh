@@ -19,6 +19,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 make -C "$repo_root/dos" WATCOM="$watcom_root" all
+cp -- "$repo_root/dos/tests/mtcp-dosbox.cfg" "$build_dir/MTCP.CFG"
 
 if [[ -n "$packet_driver" ]]; then
     cp -- "$packet_driver" "$build_dir/NE2000.COM"
@@ -27,7 +28,7 @@ if [[ ! -f "$build_dir/NE2000.COM" ]]; then
     echo "Set PACKET_DRIVER to a Crynwr-compatible NE2000.COM." >&2
     exit 2
 fi
-rm -f -- "$build_dir/PROTO.LOG"
+rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG"
 
 (
     cd -- "$build_dir"
@@ -51,5 +52,9 @@ fi
 
 if ! grep -q "PASS protocol vectors" "$build_dir/PROTO.LOG"; then
     echo "16-bit protocol vector test did not pass." >&2
+    exit 1
+fi
+if ! grep -q "PASS mTCP configuration vectors" "$build_dir/CFG.LOG"; then
+    echo "16-bit mTCP configuration vector test did not pass." >&2
     exit 1
 fi

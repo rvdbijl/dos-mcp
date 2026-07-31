@@ -70,11 +70,24 @@ Confirm that:
 - the driver accepts Ethernet IP and ARP access types;
 - no other DOS network stack exclusively owns those types.
 
+If `MTCPCFG` is set, confirm it names a readable full path and contains valid
+`IPADDR` and `PACKETINT` lines. Startup reports configuration failures before
+it contacts the packet driver. Sharing that file with mTCP does not guarantee
+that the driver permits a running mTCP utility and DOS MCP endpoint to claim
+the same packet types at once; exit the foreground utility and retry.
+
 For the checked DOSBox-X profile:
 
 ```dos
 NE2000 0x60 10 0x300
 RAGENT pass:<password> 10.0.2.15 21300 0x60
+```
+
+The equivalent mTCP-configured invocation is:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+RAGENT pass:<password> - 21300 -
 ```
 
 Different hardware needs its own driver arguments.

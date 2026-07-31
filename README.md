@@ -112,16 +112,45 @@ uv run dos-mcp
 
 ## Quick start: DOS
 
+For a hardware PC, copy the ready-to-commission [`bin/`](bin/) directory to
+`C:\DOSMCP`. It contains both endpoints, offline protocol/configuration tests,
+an editable mTCP-style configuration, and load/unload batch files. Edit
+`C:\DOSMCP\MTCP.CFG`, load the adapter packet driver, then run:
+
+```dos
+CD \DOSMCP
+PROTOCHK
+CFGCHK
+STARTTSR Unique-Lab-Passphrase
+```
+
+The example IP addresses in `bin/MTCP.CFG` are documentation-only TEST-NET
+addresses and must be replaced. `STARTTSR` sets `MTCPCFG` and uses its
+`IPADDR` and `PACKETINT` values.
+
 Build with Open Watcom 2:
 
 ```bash
 make -C dos WATCOM=/path/to/watcom all
 ```
 
+Regenerate the tracked commissioning bundle after a DOS source change:
+
+```bash
+make -C dos WATCOM=/path/to/watcom bin
+```
+
 Foreground:
 
 ```dos
 RAGENT pass:UniqueLabPass 192.168.10.55 21300 0x60
+```
+
+Both DOS endpoints can instead share an mTCP configuration:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+RAGENT pass:UniqueLabPass - 21300 -
 ```
 
 Resident, named, with an explicit file root:
@@ -201,6 +230,7 @@ tools/test_dosbox_x_tsr.sh
 Start with [Documentation](docs/index.md):
 
 - [Getting started](docs/getting-started.md)
+- [Hardware commissioning](docs/hardware-commissioning.md)
 - [Configuration](docs/configuration.md)
 - [MCP tools](docs/mcp-tools.md)
 - [DOS executables](dos/README.md)

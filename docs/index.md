@@ -15,6 +15,7 @@ identity tell a client what a selected target actually supports.
 | Goal | Document |
 |---|---|
 | Run the bridge for the first time | [Getting started](getting-started.md) |
+| Commission a hardware DOS PC | [Hardware commissioning](hardware-commissioning.md) |
 | Configure a backend or simulator | [Configuration reference](configuration.md) |
 | Understand MCP inputs and results | [MCP tools](mcp-tools.md) |
 | Build and run the DOS executable | [Foreground DOS agent](../dos/README.md) |

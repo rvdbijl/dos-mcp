@@ -11,6 +11,8 @@
 - [x] 8086 assembly receive upcall, ARP/IPv4/UDP, retries, replay handling.
 - [x] Optional passphrase, raw 128-bit key, and conspicuous open mode.
 - [x] Cross-language protocol vectors and foreground DOSBox-X test.
+- [x] Bounded mTCP `MTCPCFG` reuse for `IPADDR` and `PACKETINT`.
+- [x] Tracked hardware commissioning bundle and offline DOS self-tests.
 
 ### Protocol v2 and resident RA-TSR
 
@@ -48,6 +50,8 @@ PicoMEM/PicoMEM2 code remains intentionally unimplemented.
   genuine 4.77 MHz 8088.
 - [ ] Test DOS 3.x, 5.x, 6.x, FreeDOS, 286, 386, and 486 machines.
 - [ ] Test representative Crynwr packet drivers/adapters under loss/load.
+- [ ] Catalogue packet-driver behavior when an mTCP utility and endpoint
+  request overlapping IPv4/ARP packet types.
 - [ ] Validate `INT 28h` file dispatch and critical-error behavior by DOS
   version.
 - [ ] Validate unload ordering with common memory managers and TSR stacks.

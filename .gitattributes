@@ -1,0 +1,6 @@
+bin/*.BAT -text whitespace=cr-at-eol
+bin/*.CFG -text whitespace=cr-at-eol
+bin/*.TXT -text whitespace=cr-at-eol
+dos/bundle/*.BAT -text whitespace=cr-at-eol
+dos/bundle/*.CFG -text whitespace=cr-at-eol
+dos/bundle/*.TXT -text whitespace=cr-at-eol

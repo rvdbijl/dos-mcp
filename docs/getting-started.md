@@ -107,6 +107,23 @@ the example password on a real machine.
 
 ## Option C: foreground DOS agent
 
+For the quickest hardware bring-up, copy the repository-root `bin/` directory
+to `C:\DOSMCP`, edit `MTCP.CFG`, and load the adapter's packet driver. Then run
+the two offline checks and start the resident endpoint:
+
+```dos
+CD \DOSMCP
+PROTOCHK
+CFGCHK
+STARTTSR MyUniqueLabPassphrase
+```
+
+`STARTTSR.BAT` creates `C:\DOSMCP\REMOTE`, sets
+`MTCPCFG=C:\DOSMCP\MTCP.CFG`, and obtains the endpoint IP and packet-driver
+interrupt from that file. Its placeholder TEST-NET addresses must be edited
+before use. Give each PC a unique name by changing the final `DOS-PC` argument
+in the batch file.
+
 Build the DOS executables:
 
 ```bash
@@ -117,6 +134,13 @@ On DOS, after loading the adapter's packet driver:
 
 ```dos
 RAGENT pass:MyUniqueLabPassphrase 192.168.10.55 21300 0x60
+```
+
+If the PC already has a working mTCP configuration, reuse it instead:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+RAGENT pass:MyUniqueLabPassphrase - 21300 -
 ```
 
 On the modern host:

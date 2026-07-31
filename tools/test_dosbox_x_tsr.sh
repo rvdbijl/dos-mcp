@@ -19,6 +19,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 make -C "$repo_root/dos" WATCOM="$watcom_root" all
+cp -- "$repo_root/dos/tests/mtcp-dosbox.cfg" "$build_dir/MTCP.CFG"
 
 if [[ -n "$packet_driver" ]]; then
     cp -- "$packet_driver" "$build_dir/NE2000.COM"
@@ -27,7 +28,7 @@ if [[ ! -f "$build_dir/NE2000.COM" ]]; then
     echo "Set PACKET_DRIVER to a Crynwr-compatible NE2000.COM." >&2
     exit 2
 fi
-rm -f -- "$build_dir/PROTO.LOG" "$build_dir/TSR.LOG" \
+rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/TSR.LOG" \
     "$build_dir/QUERY.LOG" "$build_dir/UNLOAD.LOG"
 rm -rf -- "$build_dir/REMOTE"
 
@@ -61,3 +62,5 @@ for _ in {1..30}; do
 done
 grep -q "RA-TSR unloaded" "$build_dir/UNLOAD.LOG"
 grep -q "PASS protocol vectors" "$build_dir/PROTO.LOG"
+grep -q "PASS mTCP configuration vectors" "$build_dir/CFG.LOG"
+grep -Fq 'using MTCPCFG C:\MTCP.CFG' "$build_dir/TSR.LOG"

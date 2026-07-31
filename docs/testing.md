@@ -12,6 +12,7 @@ driver. Most development needs only the first two layers.
 | Python behavior | `uv run pytest` | Loopback sockets for UDP tests |
 | Native C vectors | command below | Host C89 compiler |
 | DOS build | `make -C dos WATCOM=/path/to/watcom all` | Open Watcom 2 |
+| Commissioning bundle | `make -C dos WATCOM=/path/to/watcom bin` | Open Watcom 2, `sha256sum` |
 | Foreground DOS network E2E | `tools/test_dosbox_x.sh` | Open Watcom, DOSBox-X, packet driver |
 | Resident DOS network E2E | `tools/test_dosbox_x_tsr.sh` | Open Watcom, DOSBox-X, packet driver |
 
@@ -46,12 +47,20 @@ gcc -std=c89 -Wall -Wextra -Werror \
   -o /tmp/dos-mcp-proto-test
 
 /tmp/dos-mcp-proto-test
+
+gcc -std=c89 -pedantic -Wall -Wextra -Werror \
+  -Idos/include \
+  dos/tests/config_test.c dos/agent/dmconfig.c \
+  -o /tmp/dos-mcp-config-test
+
+/tmp/dos-mcp-config-test
 ```
 
 Expected output:
 
 ```text
 PASS protocol vectors
+PASS mTCP configuration vectors
 ```
 
 This catches C/Python drift quickly, but it does not prove 16-bit ABI or
@@ -66,9 +75,16 @@ make -C dos WATCOM=/path/to/watcom all
 Expected outputs in `dos/build/`:
 
 - `PROTOCHK.EXE`
+- `CFGCHK.EXE`
 - `RAGENT.EXE`
 - `RA-TSR.EXE`
 - `TSRHOST.EXE` (test-only foreground fixture)
+
+Run `make -C dos WATCOM=/path/to/watcom bin` to compile the same sources and
+refresh the tracked hardware bundle. Its `MANIFEST.SHA256` covers the four
+shipped executables. Run `PROTOCHK` and `CFGCHK` on the destination PC after
+copying them; the latter tests parsing and atomic rejection without requiring
+a packet driver or network.
 
 The Makefile selects 8086/8088 code generation, the small memory model,
 size optimization, stack checks off, and warnings as errors. The packet
@@ -98,10 +114,10 @@ tools/test_dosbox_x.sh
 
 The harness:
 
-1. builds `PROTOCHK.EXE` and `RAGENT.EXE`;
+1. builds `PROTOCHK.EXE`, `CFGCHK.EXE`, and `RAGENT.EXE`;
 2. copies the externally supplied packet driver into the ignored build tree;
 3. starts DOSBox-X with a deterministic NE2000/SLiRP profile;
-4. runs the protocol vectors inside DOS;
+4. runs the protocol and mTCP-configuration vectors inside DOS;
 5. starts the packet driver and foreground agent;
 6. authenticates with a password-derived key from the Python UDP backend;
 7. verifies status and capabilities;
@@ -130,8 +146,9 @@ tools/test_dosbox_x_tsr.sh
 
 The resident harness:
 
-1. runs `PROTOCHK.EXE` under DOS;
-2. loads RA-TSR with a password, file root, and `RW` policy;
+1. runs `PROTOCHK.EXE` and `CFGCHK.EXE` under DOS;
+2. sets `MTCPCFG`, then loads RA-TSR with IP and packet interrupt taken from
+   that file plus a password, file root, and `RW` policy;
 3. keeps deterministic timer progress and issues DOS-idle interrupts in the
    test-only `TSRHOST.EXE`;
 4. verifies status, capabilities, empty keys, and 32/256-byte packets;

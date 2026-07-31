@@ -1,3 +1,4 @@
+#include "dmconfig.h"
 #include "dmnet.h"
 #include "dmproto.h"
 
@@ -157,6 +158,16 @@ extern char __far ratsr_resident_end;
 #endif
 
 static int parse_ip(const char *text, dm_u8 output[4]);
+static int parse_u16(const char *text, dm_u16 *output);
+static int parse_u8(const char *text, dm_u8 *output);
+static int configure_network(
+    int argc,
+    char **argv,
+    dm_u8 ip[4],
+    dm_u16 *port,
+    dm_u8 *packet_interrupt,
+    const char *program
+);
 static int parse_raw_key(const char *text, dm_u8 output[16]);
 static int parse_credential(
     const char *text,
@@ -269,16 +280,9 @@ int main(int argc, char **argv)
         puts("RAGENT: invalid or empty credential");
         return 2;
     }
-    if (argc >= 3 && parse_ip(argv[2], ip) != 0) {
-        puts("RAGENT: invalid IPv4 address");
-        return 3;
-    }
-    if (argc >= 4)
-        port = (dm_u16)strtoul(argv[3], 0, 0);
-    if (argc >= 5)
-        packet_interrupt = (dm_u8)strtoul(argv[4], 0, 0);
-    if (!port) {
-        puts("RAGENT: port must not be zero");
+    if (configure_network(
+        argc, argv, ip, &port, &packet_interrupt, "RAGENT"
+    ) != 0) {
         return 4;
     }
     memset(&session, 0, sizeof(session));
@@ -288,8 +292,8 @@ int main(int argc, char **argv)
         return 5;
     }
     agent_start_ticks = read_bios_ticks();
-    printf("Retro DOS Agent 0.1 - %u.%u.%u.%u:%u\n",
-        ip[0], ip[1], ip[2], ip[3], port);
+    printf("Retro DOS Agent 0.1 - %u.%u.%u.%u:%u, packet int 0x%02X\n",
+        ip[0], ip[1], ip[2], ip[3], port, packet_interrupt);
     if (open_mode)
         puts("WARNING: OPEN MODE - packets are not authenticated.");
     else
@@ -346,16 +350,12 @@ int main(int argc, char **argv)
         puts("RA-TSR: invalid or empty credential");
         return 3;
     }
-    if (argc >= 3 && parse_ip(argv[2], ip) != 0) {
-        puts("RA-TSR: invalid IPv4 address");
-        return 4;
-    }
-    if (argc >= 4)
-        port = (dm_u16)strtoul(argv[3], 0, 0);
-    if (argc >= 5)
-        packet_interrupt = (dm_u8)strtoul(argv[4], 0, 0);
-    if (!port || configure_tsr(argc, argv) != 0) {
-        puts("RA-TSR: invalid port, sandbox root, access mode, or name");
+    if (configure_network(
+        argc, argv, ip, &port, &packet_interrupt, "RA-TSR"
+    ) != 0)
+        return 5;
+    if (configure_tsr(argc, argv) != 0) {
+        puts("RA-TSR: invalid sandbox root, access mode, or name");
         return 5;
     }
     memset(&input, 0, sizeof(input));
@@ -400,9 +400,9 @@ int main(int argc, char **argv)
     _dos_setvect(0x1C, ratsr_idle_handler);
     _dos_setvect(0x28, ratsr_dos_idle_handler);
     _dos_setvect(0x2F, ratsr_multiplex_handler);
-    printf("RA-TSR 0.2 \"%s\" installed at %u.%u.%u.%u:%u, video %u, root %s, access %s%s\n",
+    printf("RA-TSR 0.2 \"%s\" installed at %u.%u.%u.%u:%u, packet int 0x%02X, video %u, root %s, access %s%s\n",
         agent_name, ip[0], ip[1], ip[2], ip[3], port,
-        cached_adapter, sandbox_root,
+        packet_interrupt, cached_adapter, sandbox_root,
         allow_file_read ? "R" : "",
         allow_file_write ? "W" : "");
     if (!allow_file_read && !allow_file_write)
@@ -431,6 +431,88 @@ static int parse_ip(const char *text, dm_u8 output[4])
     output[1] = (dm_u8)values[1];
     output[2] = (dm_u8)values[2];
     output[3] = (dm_u8)values[3];
+    return 0;
+}
+
+static int parse_u16(const char *text, dm_u16 *output)
+{
+    unsigned long value;
+    char *end;
+
+    if (!text || !*text || *text == '-')
+        return -1;
+    value = strtoul(text, &end, 0);
+    if (*end || !value || value > 65535UL)
+        return -1;
+    *output = (dm_u16)value;
+    return 0;
+}
+
+static int parse_u8(const char *text, dm_u8 *output)
+{
+    dm_u16 value;
+
+    if (parse_u16(text, &value) != 0 || value > 255)
+        return -1;
+    *output = (dm_u8)value;
+    return 0;
+}
+
+static int configure_network(
+    int argc,
+    char **argv,
+    dm_u8 ip[4],
+    dm_u16 *port,
+    dm_u8 *packet_interrupt,
+    const char *program
+)
+{
+    const char *config_path = getenv("MTCPCFG");
+    int explicit_ip = argc >= 3 && strcmp(argv[2], "-") != 0;
+    int explicit_interrupt = argc >= 5 && strcmp(argv[4], "-") != 0;
+
+    if (config_path && *config_path && (!explicit_ip || !explicit_interrupt)) {
+        dm_u8 configured_ip[4];
+        dm_u8 configured_interrupt = 0;
+        dm_u8 found = 0;
+        int result = dm_mtcp_config_load(
+            config_path, configured_ip, &configured_interrupt, &found
+        );
+
+        if (result != DM_MTCP_OK) {
+            printf("%s: MTCPCFG %s: %s\n",
+                program, config_path, dm_mtcp_config_error(result));
+            return -1;
+        }
+        if (!explicit_ip) {
+            if (!(found & DM_MTCP_HAVE_IP)) {
+                printf("%s: MTCPCFG has no IPADDR\n", program);
+                return -1;
+            }
+            memcpy(ip, configured_ip, 4);
+        }
+        if (!explicit_interrupt) {
+            if (!(found & DM_MTCP_HAVE_PACKET_INT)) {
+                printf("%s: MTCPCFG has no PACKETINT\n", program);
+                return -1;
+            }
+            *packet_interrupt = configured_interrupt;
+        }
+        printf("%s: using MTCPCFG %s\n", program, config_path);
+    }
+    if (explicit_ip && parse_ip(argv[2], ip) != 0) {
+        printf("%s: invalid IPv4 address\n", program);
+        return -1;
+    }
+    if (argc >= 4 && strcmp(argv[3], "-") != 0
+        && parse_u16(argv[3], port) != 0) {
+        printf("%s: invalid UDP port\n", program);
+        return -1;
+    }
+    if (explicit_interrupt && parse_u8(argv[4], packet_interrupt) != 0) {
+        printf("%s: invalid packet-driver interrupt\n", program);
+        return -1;
+    }
     return 0;
 }
 

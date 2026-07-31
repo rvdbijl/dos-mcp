@@ -13,12 +13,14 @@ Ethernet packet driver. MCP and JSON never run on DOS.
 | File | Responsibility |
 |---|---|
 | `agent/ragent.c` | shared dispatch plus foreground/resident policies |
+| `agent/dmconfig.c` | bounded `MTCPCFG` reader for `IPADDR`/`PACKETINT` |
 | `agent/dmproto.c` | SHA-256 credential derivation, XTEA session derivation, Speck packet MAC, codecs |
 | `agent/dmnet.c` | bounded Ethernet, ARP, IPv4, UDP, and limited broadcast |
 | `agent/dmpacket.c` | packet-driver access/downcalls and receive state |
 | `agent/dmpacket_rx.asm` | register-safe minimal receive upcall |
 | `agent/ratsr_hooks.asm` | resident stack, timer/DOS-idle/multiplex hooks, BIOS ring |
 | `tests/proto_test.c` | cross-language protocol vectors |
+| `tests/config_test.c` | mTCP configuration parsing vectors |
 | `tests/tsr_host.c` | DOSBox-only deterministic foreground test host |
 
 ## Build
@@ -30,12 +32,63 @@ make -C dos WATCOM=/path/to/watcom all
 Outputs:
 
 - `build/PROTOCHK.EXE`
+- `build/CFGCHK.EXE`
 - `build/RAGENT.EXE`
 - `build/RA-TSR.EXE`
 - `build/TSRHOST.EXE` (integration fixture only)
 
 The Makefile uses Open Watcom `-0 -ms -os -s -wx`. No packet-driver binary is
 redistributed; supply the appropriate driver for the adapter.
+
+For a copyable hardware-PC bundle, run:
+
+```bash
+make -C dos WATCOM=/path/to/watcom bin
+```
+
+This refreshes the repository-root `bin/` directory with `RAGENT.EXE`,
+`RA-TSR.EXE`, `PROTOCHK.EXE`, `CFGCHK.EXE`, a SHA-256 manifest, an editable
+`MTCP.CFG`, DOS-readable instructions, and safe load/unload batch files.
+`TSRHOST.EXE` is intentionally excluded because it is only an emulator test
+fixture. No third-party packet driver or working site credential is bundled.
+
+## mTCP configuration reuse
+
+When the DOS environment variable `MTCPCFG` names a readable mTCP
+configuration file, either endpoint can read these keys:
+
+```text
+PACKETINT 0x60
+IPADDR 192.168.10.55
+```
+
+Set the full path in DOS, exactly as for mTCP utilities:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+```
+
+Precedence is per field: an explicit command-line value wins, otherwise the
+value in `MTCPCFG` wins, otherwise the built-in default is used. A `-` in the
+IP, port, or packet-interrupt position means “no command-line override.” The
+port is not an mTCP setting and remains 21300 unless explicitly changed.
+
+If `MTCPCFG` is set and a non-overridden `IPADDR` or `PACKETINT` is missing,
+invalid, unreadable, or on a line longer than 255 bytes, startup fails with a
+visible diagnostic. Unknown mTCP keys and comments are ignored. When both IP
+and packet interrupt are explicit, the file is not read.
+
+Examples:
+
+```dos
+RAGENT pass:UniqueLabPass - 21300 -
+RA-TSR pass:UniqueLabPass - 21300 - C:\REMOTE RW WORKBENCH-386
+```
+
+The endpoints reuse mTCP's configuration convention, not its TCP/IP code.
+Some packet drivers may refuse a second client claiming IPv4/ARP packet types;
+exit foreground mTCP programs before loading an endpoint if initialization
+reports that the packet-driver type is already in use.
 
 ## Credentials
 
@@ -66,7 +119,8 @@ NE2000 0x60 10 0x300
 RAGENT pass:UniqueLabPass 10.0.2.15 21300 0x60
 ```
 
-Defaults are open mode, `10.0.2.15`, port 21300, and packet interrupt `60h`.
+Defaults, when not supplied by `MTCPCFG`, are open mode, `10.0.2.15`, port
+21300, and packet interrupt `60h`.
 RAGENT captures text and queues BIOS keys. Its own foreground loop consumes
 the keys as commands. `EXIT` or local Ctrl+Alt+Esc stops it. A child command
 temporarily prevents network service by design.

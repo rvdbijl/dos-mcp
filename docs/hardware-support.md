@@ -60,9 +60,19 @@ access for:
 The implementation provides minimal ARP, IPv4, and UDP itself. It does not
 require an active mTCP application or a TCP stack.
 
+Both DOS endpoints can reuse `IPADDR` and `PACKETINT` from the file named by
+the conventional `MTCPCFG` environment variable. This is configuration
+compatibility only: the endpoint does not use or modify mTCP's stack. Packet
+drivers differ in how many clients and overlapping packet-type registrations
+they permit. Concurrent operation with foreground mTCP utilities is therefore
+unverified; exit the utility first if the endpoint reports packet-driver
+initialization failure.
+
 | Driver/adapter | Status |
 |---|---|
 | Crynwr-compatible NE2000 driver in DOSBox-X | Verified |
+| mTCP-style `IPADDR`/`PACKETINT` configuration | DOSBox-X verified |
+| Concurrent endpoint and mTCP utility | Driver-dependent; not yet verified |
 | Physical NE1000/NE2000 | Not yet verified |
 | Other packet-driver Ethernet adapters | API-compatible in design; unverified |
 | SLIP/PPP packet drivers | Not supported by the Ethernet framing code |

@@ -57,6 +57,19 @@ RA-TSR [credential] [local-ip] [port] [packet-int] [root] [access] [name]
 | access | `-` | `-`, `R`, `W`, or `RW` |
 | name | `DOS-PC` | 1–31 visible ASCII bytes without spaces |
 
+When `MTCPCFG` is set, use `-` for local IP and packet interrupt to read
+`IPADDR` and `PACKETINT` from the shared mTCP file:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+RA-TSR pass:UniqueMachinePass - 21300 - C:\REMOTE RW WORKBENCH-386
+```
+
+An explicit positional IP or interrupt overrides its corresponding file key.
+See [Configuration reference](configuration.md) for strict parsing and failure
+behavior, or [Hardware commissioning](hardware-commissioning.md) for the
+copy-ready bundle workflow.
+
 The name is an operator label, not authentication. If names collide, the
 Linux bridge exposes selectors such as `WORKBENCH@acde48444d02`.
 
