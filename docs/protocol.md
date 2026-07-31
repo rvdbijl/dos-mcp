@@ -221,8 +221,10 @@ Software must use BIOS/DOS keyboard input for compatibility.
 
 ## File-transfer payloads
 
-File paths are 1–80 bytes and are interpreted relative to the target's local
-sandbox policy.
+File paths are 1–80 bytes and are interpreted by the target's local path
+policy. A normal RA-TSR root requires relative paths. The explicit `ALL` root
+requires absolute drive-qualified paths. This policy is selected locally at
+TSR installation and is not controllable through the wire protocol.
 
 ### Download
 

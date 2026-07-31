@@ -24,6 +24,7 @@
 - [x] Bounded streamed text VRAM capture.
 - [x] BIOS ring keyboard insertion with partial receipts.
 - [x] Opt-in sandboxed file download and temp-file upload commit with CRC32.
+- [x] Explicit warned `ALL` mode for unrestricted drive-qualified file access.
 - [x] Raw standard CGA/Hercules/EGA/VGA graphics state machine.
 - [x] Replace per-block XTEA MAC with pre-expanded native-16-bit Speck MAC.
 - [x] Protocol-v2 odd-frame padding for word-wide NE2000 drivers.

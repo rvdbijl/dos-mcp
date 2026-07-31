@@ -86,6 +86,23 @@ mode, and no file access. Since file access is off, a missing default
 The name is an operator label, not authentication. If names collide, the
 Linux bridge exposes selectors such as `WORKBENCH@acde48444d02`.
 
+### Unrestricted drive mode
+
+The literal root `ALL` is an explicit commissioning mode that exposes every
+drive visible to DOS. In this mode, every network file path must be an
+absolute drive path such as `C:\DOS\MEM.TXT`; `C:MEM.TXT`, UNC paths, and
+relative paths are rejected. `ALL W` and `ALL RW` print a prominent
+unrestricted-access warning during installation.
+
+```dos
+RA-TSR - - 21300 - ALL RW
+```
+
+This example obtains IP address, packet interrupt, and name from `MTCPCFG`,
+uses open credential mode, and enables reads and writes. The Linux bridge
+must still opt into both operations with `DOS_MCP_ALLOW_FILE_READ=1` and
+`DOS_MCP_ALLOW_FILE_WRITE=1`.
+
 ## Query and unload
 
 Run `RA-TSR` again with no arguments to query the installed instance. Unload
@@ -132,10 +149,12 @@ every block and final checksum.
 ## File sandbox and transactions
 
 File access is disabled unless `R`, `W`, or `RW` is supplied locally. Paths
-from the network are relative to the configured root and limited to 80 bytes.
+are limited to 80 bytes. A normal root accepts only relative paths under that
+root. The special root `ALL` accepts only absolute drive-qualified paths.
 RA-TSR rejects:
 
-- absolute paths and drive letters;
+- absolute paths and drive letters in normal-root mode, or non-absolute paths
+  in `ALL` mode;
 - empty, `.` or `..` components;
 - components longer than DOS 8.3's 12-character rendered form;
 - DOS wildcard/control punctuation;
@@ -143,8 +162,9 @@ RA-TSR rejects:
 
 Downloads stream sequentially and end with size and CRC32 verification.
 Uploads declare size, CRC32, and overwrite policy before data is accepted.
-Data goes to a temporary file; commit verifies byte count and checksum, then
-renames it. An existing destination is replaced only when both the Linux
+Data goes to a newly created temporary file in the destination directory;
+commit verifies byte count and checksum, then renames it. An existing
+destination is replaced only when both the Linux
 bridge and RA-TSR were explicitly configured to allow writes and the MCP call
 sets `overwrite=true`.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from contextlib import suppress
 
-from dos_mcp.backends.udp import UdpBackend
+from dos_mcp.backends.udp import AgentOperationError, UdpBackend
 from dos_mcp.protocol import Opcode, derive_password_key
 
 
@@ -105,12 +105,19 @@ def main() -> None:
         type_all(backend, "TEXT", enter=True)
         time.sleep(0.2)
 
+        try:
+            backend.download_file(path="ROUNDTRP.BIN")
+        except AgentOperationError:
+            pass
+        else:
+            raise AssertionError("ALL mode accepted a relative DOS path")
+        path = "C:\\REMOTE\\ROUNDTRP.BIN"
         receipt = backend.upload_file(
-            path="ROUNDTRP.BIN",
+            path=path,
             data=content,
             overwrite=True,
         )
-        downloaded = backend.download_file(path="ROUNDTRP.BIN")
+        downloaded = backend.download_file(path=path)
         if receipt.size != len(content) or downloaded.data != content:
             raise AssertionError("TSR binary file round trip failed")
 

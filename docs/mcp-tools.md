@@ -125,7 +125,8 @@ Read-only from the target, but disabled by default.
 Arguments:
 
 - `target`: optional selector;
-- `path`: 1–80 byte path relative to the target file root.
+- `path`: 1–80 byte path relative to a normal target file root, or an absolute
+  drive path when that target was explicitly loaded with root `ALL`.
 
 Result contains path, size, CRC32, and strict base64 content. Maximum modern
 backend size is 1 MiB. RA-TSR also requires load-time `R` or `RW`.
@@ -137,7 +138,8 @@ Mutating and marked destructive.
 Arguments:
 
 - `target`: optional selector;
-- `path`: relative bounded target path;
+- `path`: bounded target path: relative for a normal root, absolute and
+  drive-qualified for root `ALL`;
 - `content_base64`: strict RFC 4648 content, decoded size ≤1 MiB;
 - `overwrite`: explicit permission to replace an existing file.
 

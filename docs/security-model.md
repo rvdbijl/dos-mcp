@@ -99,11 +99,16 @@ the intended action. Capture and verify afterward.
 
 ## RA-TSR file boundary
 
-RA-TSR accepts only relative bounded paths under its configured root. It
-rejects drive letters, absolute paths, empty/dot/dot-dot components, wildcard
-and control punctuation, oversized components, and oversized complete paths.
+RA-TSR normally accepts only relative bounded paths under its configured
+root. An operator can explicitly select root `ALL` at load time to accept
+absolute drive-qualified paths across all DOS drives instead. In either mode
+it rejects the other path form, empty/dot/dot-dot components, wildcard and
+control punctuation, oversized components, and oversized complete paths.
+`ALL W` and `ALL RW` produce a prominent startup warning. The bridge's file
+read/write environment flags remain independent gates.
 
-Downloads are sequential and CRC32-verified. Uploads use a temporary file,
+Downloads are sequential and CRC32-verified. Uploads use a newly created
+temporary file beside the destination,
 declared size/CRC, sequential offsets, final integrity verification, and
 rename-on-commit. Incomplete transfers are aborted during DOS-idle
 session cleanup. Unload refuses while a transfer still owns resources.
@@ -111,8 +116,10 @@ session cleanup. Unload refuses while a transfer still owns resources.
 Residual risks include DOS device/file aliasing, filesystem corruption,
 TOCTOU behavior under local software, weak/no DOS permissions, 8.3 alias
 surprises, and differences among DOS kernels. Use a dedicated transfer
-directory and backups. This feature is not a general-purpose secure file
-server.
+directory and backups for normal operation. `ALL` intentionally removes that
+directory boundary and is suitable only where unrestricted drive access is
+the operator's stated policy. This feature is not a general-purpose secure
+file server.
 
 ## Resident execution risks
 

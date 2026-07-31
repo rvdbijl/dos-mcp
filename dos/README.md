@@ -156,8 +156,18 @@ RA-TSR pass:UniqueLabPass 10.0.2.15 21300 0x60 C:\REMOTE RW DOSBOX-TSR
 ```
 
 Additional defaults are root `C:\RATSR`, file access `-`, and name `DOS-PC`.
-The root must already exist. Access is `-`, `R`, `W`, or `RW`. Name is 1–31
-visible ASCII bytes without spaces.
+A normal root must already exist when file access is enabled. Access is `-`,
+`R`, `W`, or `RW`. Name is 1–31 visible ASCII bytes without spaces.
+
+The special root `ALL` deliberately exposes all DOS drives. It accepts only
+absolute paths such as `C:\AUTOEXEC.BAT`, while a normal configured root
+accepts only relative paths. `ALL RW` prints an unrestricted-access warning
+at install time. Upload temporary files are created beside their destination
+so rename-on-commit also works across drive boundaries.
+
+```dos
+RA-TSR pass:UniqueLabPass 10.0.2.15 21300 0x60 ALL RW DOSBOX-TSR
+```
 
 RA-TSR supports:
 
@@ -165,7 +175,7 @@ RA-TSR supports:
 - streamed active text-page capture;
 - BIOS key insertion;
 - standard CGA/Hercules/EGA/VGA raw capture;
-- sequential sandboxed download and temp-file/CRC upload commit;
+- sequential bounded download and temp-file/CRC upload commit;
 - disconnected named local discovery;
 - explicit unload.
 

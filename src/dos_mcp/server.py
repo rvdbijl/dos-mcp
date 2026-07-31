@@ -144,7 +144,10 @@ def create_server(backend: Backend | None = None) -> MCPServer:
             Field(
                 min_length=1,
                 max_length=80,
-                description="Path relative to the target's configured file sandbox.",
+                description=(
+                    "Path relative to the configured root, or drive-absolute "
+                    "when RA-TSR uses unrestricted ALL mode."
+                ),
             ),
         ],
         target: str | None = None,
@@ -170,7 +173,10 @@ def create_server(backend: Backend | None = None) -> MCPServer:
             Field(
                 min_length=1,
                 max_length=80,
-                description="Path relative to the target's configured file sandbox.",
+                description=(
+                    "Path relative to the configured root, or drive-absolute "
+                    "when RA-TSR uses unrestricted ALL mode."
+                ),
             ),
         ],
         content_base64: Annotated[

@@ -166,6 +166,18 @@ MD C:\REMOTE
 RA-TSR pass:UniqueLabPass 192.168.10.55 21300 0x60 C:\REMOTE RW WORKBENCH-386
 ```
 
+For deliberate unrestricted access to every DOS drive, use the literal root
+`ALL`. Network paths must then be absolute drive paths such as
+`C:\CONFIG.SYS`; RA-TSR prints a prominent warning when `ALL` and write access
+are enabled:
+
+```dos
+RA-TSR pass:UniqueLabPass 192.168.10.55 21300 0x60 ALL RW WORKBENCH-386
+```
+
+The Linux bridge still requires its independent file-read and file-write
+flags shown below.
+
 Connect directly:
 
 ```bash

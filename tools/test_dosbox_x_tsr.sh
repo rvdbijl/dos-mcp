@@ -65,6 +65,9 @@ grep -q "RA-TSR unloaded" "$build_dir/UNLOAD.LOG"
 grep -q "PASS protocol vectors" "$build_dir/PROTO.LOG"
 grep -q "PASS mTCP configuration vectors" "$build_dir/CFG.LOG"
 grep -Fq 'using MTCPCFG C:\MTCP.CFG' "$build_dir/TSR.LOG"
+grep -Fq 'root ALL, access RW' "$build_dir/TSR.LOG"
+grep -Fq 'WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.' \
+    "$build_dir/TSR.LOG"
 grep -Fq '"DOSBOX-TSR" installed at 10.0.2.15:21300' \
     "$build_dir/ZERO.LOG"
 grep -q "RA-TSR unloaded" "$build_dir/ZERO-U.LOG"

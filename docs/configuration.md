@@ -157,7 +157,9 @@ The UDP port is DOS MCP-specific and is never obtained from the mTCP file.
 When a fresh RA-TSR is run with no arguments and `MTCPCFG` is set, it uses the
 file's `IPADDR`, `PACKETINT`, and hostname. Other defaults remain: port 21300,
 open credential mode, and disabled file access. `C:\RATSR` need not exist while
-file access is disabled; an enabled `R`, `W`, or `RW` root must exist.
+file access is disabled; an enabled `R`, `W`, or `RW` normal root must exist.
+The literal root `ALL` is an explicit exception and enables drive-qualified
+paths across every mounted DOS drive.
 
 This behavior follows the mTCP configuration-file convention documented in
 the [mTCP user documentation](https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/net/mtcp/2025-01-10/mTCP_2025-01-10.pdf).
@@ -183,6 +185,17 @@ value or active `MTCPCFG` value supplies that field.
 
 Access values are `-`, `R`, `W`, and `RW`. Name is 1–31 visible ASCII bytes
 without spaces. Discovery sends to UDP 21301 at build-time default.
+
+With a normal root, file-operation paths are relative to that root. With root
+`ALL`, paths must instead be absolute DOS drive paths such as
+`C:\DATA\FILE.BIN`; drive-relative forms such as `C:FILE.BIN` remain invalid.
+RA-TSR prints `WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.`
+when `ALL` is combined with `W` or `RW`. For example, using the shared mTCP
+network identity and hostname:
+
+```dos
+RA-TSR - - 21300 - ALL RW
+```
 
 Credential forms on DOS:
 

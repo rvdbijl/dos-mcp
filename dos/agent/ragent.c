@@ -119,6 +119,7 @@ static dm_u16 discovery_last_tick;
 static dm_u16 advertised_port;
 static dm_u8 allow_file_read;
 static dm_u8 allow_file_write;
+static dm_u8 unrestricted_filesystem;
 static dm_u8 cached_dos_major;
 static dm_u8 cached_dos_minor;
 static dm_u8 cached_adapter;
@@ -225,12 +226,14 @@ static int configure_tsr(int argc, char **argv, const char *mtcp_hostname);
 static void keep_resident(void);
 static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length);
 static int safe_relative_path(const char *path);
+static int safe_absolute_path(const char *path);
 static int build_sandbox_path(
     const dm_u8 *value,
     dm_u16 length,
     char *output
 );
 static void close_transfer(int remove_temporary);
+static int create_transfer_temp(dm_u16 id);
 static dm_u16 begin_file_read(const dm_u8 *payload, dm_u16 length, dm_u8 *output);
 static dm_u16 read_transfer_block(
     const dm_u8 *payload,
@@ -332,6 +335,7 @@ int main(int argc, char **argv)
     if (argc > 8) {
         puts("Usage: RA-TSR [credential] [ip] [port] [packet-int] [root] [access] [name]");
         puts("  access: - (none), R, W, or RW; name: 1-31 visible ASCII");
+        puts("  root: existing directory, or ALL for unrestricted DOS drives");
         puts("  unload with RA-TSR /U");
         return 1;
     }
@@ -413,6 +417,9 @@ int main(int argc, char **argv)
         allow_file_write ? "W" : "");
     if (!allow_file_read && !allow_file_write)
         puts("Filesystem access disabled.");
+    if (unrestricted_filesystem
+        && (allow_file_read || allow_file_write))
+        puts("WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.");
     if (open_mode)
         puts("WARNING: OPEN MODE - packets are not authenticated.");
     puts("Unload with RA-TSR /U.");
@@ -1621,6 +1628,7 @@ static int configure_tsr(int argc, char **argv, const char *mtcp_hostname)
     }
     strcpy(agent_name, name);
     strcpy(sandbox_root, root);
+    unrestricted_filesystem = stricmp(root, "ALL") == 0;
     while (length > 3
         && (sandbox_root[length - 1] == '\\'
             || sandbox_root[length - 1] == '/'))
@@ -1630,7 +1638,8 @@ static int configure_tsr(int argc, char **argv, const char *mtcp_hostname)
     if (strcmp(access, "-") != 0
         && !allow_file_read && !allow_file_write)
         return -1;
-    if ((allow_file_read || allow_file_write)
+    if (!unrestricted_filesystem
+        && (allow_file_read || allow_file_write)
         && (chdir(sandbox_root) != 0 || chdir(current) != 0))
         return -1;
     return 0;
@@ -1700,6 +1709,19 @@ static int safe_relative_path(const char *path)
     return 1;
 }
 
+static int safe_absolute_path(const char *path)
+{
+    unsigned char drive = (unsigned char)path[0];
+
+    if (!((drive >= 'A' && drive <= 'Z')
+            || (drive >= 'a' && drive <= 'z'))
+        || path[1] != ':'
+        || (path[2] != '\\' && path[2] != '/')
+        || !path[3])
+        return 0;
+    return safe_relative_path(path + 3);
+}
+
 static int build_sandbox_path(
     const dm_u8 *value,
     dm_u16 length,
@@ -1707,13 +1729,21 @@ static int build_sandbox_path(
 )
 {
     char relative[81];
-    size_t root_length = strlen(sandbox_root);
+    size_t root_length;
 
-    if (!length || length > 80
-        || root_length + 1 + length > TSR_PATH_MAX)
+    if (!length || length > 80)
         return -1;
     memcpy(relative, value, length);
     relative[length] = 0;
+    if (unrestricted_filesystem) {
+        if (!safe_absolute_path(relative))
+            return -1;
+        strcpy(output, relative);
+        return 0;
+    }
+    root_length = strlen(sandbox_root);
+    if (root_length + 1 + length > TSR_PATH_MAX)
+        return -1;
     if (!safe_relative_path(relative))
         return -1;
     strcpy(output, sandbox_root);
@@ -1733,6 +1763,47 @@ static void close_transfer(int remove_temporary)
     if (remove_temporary && transfer_kind == TRANSFER_WRITE)
         remove(transfer_temp);
     transfer_kind = TRANSFER_NONE;
+}
+
+static int create_transfer_temp(dm_u16 id)
+{
+    size_t prefix_length;
+    dm_u8 attempt;
+
+    if (unrestricted_filesystem) {
+        char *backslash = strrchr(transfer_path, '\\');
+        char *slash = strrchr(transfer_path, '/');
+        char *separator = backslash;
+
+        if (slash && (!separator || slash > separator))
+            separator = slash;
+        if (!separator)
+            return -1;
+        prefix_length = (size_t)(separator - transfer_path) + 1;
+        memcpy(transfer_temp, transfer_path, prefix_length);
+    } else {
+        prefix_length = strlen(sandbox_root);
+        memcpy(transfer_temp, sandbox_root, prefix_length);
+        if (prefix_length
+            && transfer_temp[prefix_length - 1] != '\\'
+            && transfer_temp[prefix_length - 1] != '/')
+            transfer_temp[prefix_length++] = '\\';
+    }
+    if (prefix_length + 12 > sizeof(transfer_temp))
+        return -1;
+    for (attempt = 0; attempt < 16; ++attempt) {
+        sprintf(
+            transfer_temp + prefix_length,
+            "DM%04X%X.TMP",
+            id,
+            attempt
+        );
+        if (stricmp(transfer_temp, transfer_path) != 0
+            && _dos_creatnew(transfer_temp, 0, &transfer_handle) == 0)
+            return 0;
+    }
+    transfer_temp[0] = 0;
+    return -1;
 }
 
 static dm_u16 next_transfer_id(void)
@@ -1840,9 +1911,7 @@ static dm_u16 begin_file_write(const dm_u8 *payload, dm_u16 length, dm_u8 *outpu
         return 0;
     }
     id = next_transfer_id();
-    sprintf(transfer_temp, "%s\\RA%04X.TMP", sandbox_root, id);
-    remove(transfer_temp);
-    if (_dos_creatnew(transfer_temp, 0, &transfer_handle) != 0)
+    if (create_transfer_temp(id) != 0)
         return 0;
     transfer_kind = TRANSFER_WRITE;
     transfer_size = dm_get_u32(payload + 1);
