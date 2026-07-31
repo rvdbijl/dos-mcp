@@ -12,6 +12,7 @@ from .constants import (
     GraphicsLayout,
     KeyCode,
     Phase,
+    ResidentDiagnosticFlag,
 )
 
 _HELLO_REQUEST = struct.Struct("<I")
@@ -27,6 +28,7 @@ _TRANSFER_END_REQUEST = struct.Struct("<H")
 _TRANSFER_END_RESPONSE = struct.Struct("<II")
 _FILE_WRITE_BEGIN = struct.Struct("<BIIB")
 _GRAPHICS_BEGIN_RESPONSE = struct.Struct("<HBBBBHHII")
+_RESIDENT_DIAGNOSTICS = struct.Struct("<BB15HBBhhBB")
 
 MAX_TRANSFER_BLOCK = 900
 MAX_DOS_PATH_BYTES = 80
@@ -101,6 +103,94 @@ class StatusMessage:
         values = list(_STATUS.unpack(payload))
         values[5] = Phase(values[5])
         return cls(*values)
+
+
+@dataclass(frozen=True, slots=True)
+class ResidentDiagnosticsMessage:
+    version: int
+    flags: ResidentDiagnosticFlag
+    int08_entries: int
+    int1c_entries: int
+    int28_entries: int
+    worker_runs: int
+    fallback_runs: int
+    busy_skips: int
+    receive_allocations: int
+    receive_completions: int
+    receive_drops: int
+    send_attempts: int
+    send_failures: int
+    last_receive_bios_tick: int
+    last_worker_bios_tick: int
+    worker_ticks: int
+    receive_length: int
+    master_pic_mask: int
+    slave_pic_mask: int
+    last_protocol_result: int
+    last_send_result: int
+    last_opcode: int
+
+    def encode(self) -> bytes:
+        if self.version != 1:
+            raise ValueError("unsupported resident diagnostics version")
+        return _RESIDENT_DIAGNOSTICS.pack(
+            self.version,
+            int(self.flags),
+            self.int08_entries,
+            self.int1c_entries,
+            self.int28_entries,
+            self.worker_runs,
+            self.fallback_runs,
+            self.busy_skips,
+            self.receive_allocations,
+            self.receive_completions,
+            self.receive_drops,
+            self.send_attempts,
+            self.send_failures,
+            self.last_receive_bios_tick,
+            self.last_worker_bios_tick,
+            self.worker_ticks,
+            self.receive_length,
+            self.master_pic_mask,
+            self.slave_pic_mask,
+            self.last_protocol_result,
+            self.last_send_result,
+            self.last_opcode,
+            0,
+        )
+
+    @classmethod
+    def decode(cls, payload: bytes) -> ResidentDiagnosticsMessage:
+        _require_size(payload, _RESIDENT_DIAGNOSTICS.size, "resident diagnostics")
+        raw = _RESIDENT_DIAGNOSTICS.unpack(payload)
+        if raw[0] != 1:
+            raise ValueError("unsupported resident diagnostics version")
+        if raw[-1] != 0:
+            raise ValueError("resident diagnostics reserved byte is nonzero")
+        return cls(
+            version=raw[0],
+            flags=ResidentDiagnosticFlag(raw[1]),
+            int08_entries=raw[2],
+            int1c_entries=raw[3],
+            int28_entries=raw[4],
+            worker_runs=raw[5],
+            fallback_runs=raw[6],
+            busy_skips=raw[7],
+            receive_allocations=raw[8],
+            receive_completions=raw[9],
+            receive_drops=raw[10],
+            send_attempts=raw[11],
+            send_failures=raw[12],
+            last_receive_bios_tick=raw[13],
+            last_worker_bios_tick=raw[14],
+            worker_ticks=raw[15],
+            receive_length=raw[16],
+            master_pic_mask=raw[17],
+            slave_pic_mask=raw[18],
+            last_protocol_result=raw[19],
+            last_send_result=raw[20],
+            last_opcode=raw[21],
+        )
 
 
 @dataclass(frozen=True, slots=True)

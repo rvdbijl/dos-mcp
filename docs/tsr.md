@@ -112,7 +112,7 @@ with:
 RA-TSR /U
 ```
 
-Unload succeeds only when RA-TSR still owns all three interrupt vectors.
+Unload succeeds only when RA-TSR still owns all four interrupt vectors.
 If another TSR was installed above it, RA-TSR refuses to free memory because
 doing so would leave the newer program with dangling chains. It also refuses
 while a file or graphics transfer is active. After the transfer completes or
@@ -127,11 +127,12 @@ The packet-driver receive callback is an assembly producer only. It offers a
 fixed 1,518-byte buffer, records the completed length, and returns. It never
 parses a request or calls DOS.
 
-The resident worker has two chained entries on one private stack. `INT 1Ch`
-handles timer-safe networking, screen, graphics, and keyboard work. `INT 28h`
-is the only entry allowed to perform DOS filesystem calls. An active flag
-prevents nested worker execution while still chaining nested interrupts. The
-worker:
+The resident worker has three chained entries on one private stack. `INT 1Ch`
+handles normal timer-safe networking, screen, graphics, and keyboard work.
+`INT 08h` first invokes the saved BIOS timer and runs the same non-DOS worker
+only when that BIOS chain did not reach RA-TSR's `INT 1Ch`. `INT 28h` is the
+only entry allowed to perform DOS filesystem calls. An active flag prevents
+nested worker execution while still chaining nested interrupts. The worker:
 
 1. expires an inactive authenticated session;
 2. emits a disconnected discovery announcement when due;
@@ -139,6 +140,11 @@ worker:
 4. consumes at most one completed receive buffer;
 5. leaves file requests queued until a DOS-idle entry with no critical error;
 6. restores the interrupted stack and chains the prior handler.
+
+Running `RA-TSR` with no arguments prints scheduler, packet callback, send,
+last-activity, and PIC-mask counters. The remote protocol's resident
+diagnostics operation reports the same state plus ownership bits for all four
+vectors. Counters are unsigned 16-bit commissioning values and wrap naturally.
 
 Text VRAM is read in 256-byte response fragments rather than copied as a
 single 4 KiB interrupt operation. Large file and graphics data use explicit

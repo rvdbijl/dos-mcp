@@ -6,7 +6,7 @@ import time
 from contextlib import suppress
 
 from dos_mcp.backends.udp import AgentOperationError, UdpBackend
-from dos_mcp.protocol import Opcode, derive_password_key
+from dos_mcp.protocol import Opcode, ResidentDiagnosticFlag, derive_password_key
 
 
 def connect(deadline: float) -> UdpBackend:
@@ -70,6 +70,15 @@ def main() -> None:
             raise AssertionError("TSR file capabilities were not advertised")
         if not capabilities.graphics_capture:
             raise AssertionError("TSR graphics capability was not advertised")
+        diagnostics = backend.get_resident_diagnostics()
+        expected_vectors = (
+            ResidentDiagnosticFlag.OWNS_INT08
+            | ResidentDiagnosticFlag.OWNS_INT1C
+            | ResidentDiagnosticFlag.OWNS_INT28
+            | ResidentDiagnosticFlag.OWNS_INT2F
+        )
+        if diagnostics.flags & expected_vectors != expected_vectors:
+            raise AssertionError("TSR does not own all installed interrupt vectors")
         backend.send_keys(
             text="",
             keys=(),
@@ -87,6 +96,25 @@ def main() -> None:
         after = backend.capture_screen()
         if not any("DOS version" in row for row in after.text):
             raise AssertionError("VER output was not captured through the TSR")
+
+        type_all(backend, "CUT1C", enter=True)
+        cut_before = backend.get_resident_diagnostics()
+        time.sleep(0.25)
+        if backend._request(Opcode.PING, b"watchdog") != b"watchdog":
+            raise AssertionError("INT 08h watchdog did not service a request")
+        cut_after = backend.get_resident_diagnostics()
+        if cut_after.flags & ResidentDiagnosticFlag.OWNS_INT1C:
+            raise AssertionError("INT 1Ch suppression fixture did not take ownership")
+        if not cut_after.flags & ResidentDiagnosticFlag.OWNS_INT08:
+            raise AssertionError("RA-TSR lost INT 08h during watchdog test")
+        if cut_after.int1c_entries != cut_before.int1c_entries:
+            raise AssertionError("suppressed INT 1Ch unexpectedly continued")
+        if cut_after.fallback_runs <= cut_before.fallback_runs:
+            raise AssertionError("INT 08h watchdog fallback did not run")
+        type_all(backend, "REST1C", enter=True)
+        restored = backend.get_resident_diagnostics()
+        if not restored.flags & ResidentDiagnosticFlag.OWNS_INT1C:
+            raise AssertionError("INT 1Ch was not restored after watchdog test")
 
         type_all(backend, "GFX13", enter=True)
         time.sleep(0.2)
@@ -133,7 +161,7 @@ def main() -> None:
                 settle_ms=0,
             )
         print(
-            "PASS: resident status, text/VGA capture, BIOS keys, "
+            "PASS: resident status, INT08 watchdog, text/VGA capture, BIOS keys, "
             "binary upload/download, and unload"
         )
     finally:

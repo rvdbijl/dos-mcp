@@ -35,6 +35,7 @@ class Opcode(IntEnum):
     GRAPHICS_BEGIN = 15
     GRAPHICS_BLOCK = 16
     GRAPHICS_END = 17
+    GET_DIAGNOSTICS = 18
 
 
 class ErrorCode(IntEnum):
@@ -93,6 +94,17 @@ class GraphicsLayout(IntEnum):
     PLANAR_4BPP = 4
     PLANAR_1BPP = 5
     PACKED_8BPP = 6
+
+
+class ResidentDiagnosticFlag(IntFlag):
+    OWNS_INT08 = 1 << 0
+    OWNS_INT1C = 1 << 1
+    OWNS_INT28 = 1 << 2
+    OWNS_INT2F = 1 << 3
+    ENABLED = 1 << 4
+    RECEIVE_READY = 1 << 5
+    SESSION_ACTIVE = 1 << 6
+    RESPONSE_PENDING = 1 << 7
 
 
 class KeyCode(IntEnum):

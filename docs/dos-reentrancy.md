@@ -41,6 +41,20 @@ Nested timer ticks still reach the previous handler but cannot run a second
 RA-TSR worker. Packet IRQs may fill the single receive buffer while the worker
 runs; an already-ready frame is dropped.
 
+### `INT 08h` watchdog entry
+
+RA-TSR also owns the hardware timer vector. It records the current RA
+`INT 1Ch` entry generation, invokes the saved `INT 08h` handler first using an
+interrupt-compatible far call, and checks the generation after that handler
+returns. The normal BIOS path invokes the current `INT 1Ch`, so no additional
+worker runs. If a foreground program replaced `INT 1Ch` without chaining, the
+watchdog runs one bounded non-DOS worker step on the private stack.
+
+The watchdog uses the same active flag as `INT 1Ch` and `INT 28h`. A nested
+timer still reaches the saved BIOS handler, but cannot enter a second worker.
+The watchdog never calls DOS and does not send an extra PIC EOI; the saved
+BIOS handler retains responsibility for timer accounting and acknowledgement.
+
 The current 32 KiB stack and retained 128 KiB PSP allocation are conservative
 until linker-derived and physical high-water measurements are available.
 
@@ -61,8 +75,8 @@ transfers exercise this path.
 `INT 2Fh AX=D05Ah` supports query, unload preparation, packet-handle query,
 and diagnostic state. Unload preparation stops resident work. After the
 interrupt returns, the transient unloader releases both packet-driver handles
-from ordinary process context, then restores the verified `INT 1Ch`, `INT 28h`,
-and `INT 2Fh` vectors and frees the PSP block. Packet handle zero is valid and
+from ordinary process context, then restores the verified `INT 08h`, `INT 1Ch`,
+`INT 28h`, and `INT 2Fh` vectors and frees the PSP block. Packet handle zero is valid and
 is distinct from the internal `FFFFh` invalid sentinel.
 It refuses while a transfer owns a DOS handle, avoiding DOS close/remove
 calls from the multiplex interrupt.
@@ -75,6 +89,7 @@ middle of a chain would be unsafe.
 | Work | Resident rule |
 |---|---|
 | Packet decode/MAC | one bounded received datagram |
+| Hardware watchdog | one fallback step only when RA `INT 1Ch` was bypassed |
 | Status/capabilities | BDA/cached values only |
 | Text capture | metadata snapshot, then ≤256 VRAM bytes per response entry |
 | Keyboard insertion | direct validated BIOS ring update with preserved flags |
@@ -146,4 +161,5 @@ RA-TSR. It is not installed or exposed as a product endpoint.
 - DOS version/critical-error behavior;
 - packet-driver reentrancy and transmit completion;
 - interaction with common memory managers and TSR stacks;
+- foreground programs that mask IRQ0, the NIC IRQ, or the AT slave-PIC cascade;
 - BIOS ring variations and enhanced keyboard behavior.

@@ -19,6 +19,14 @@ the endpoint without a credential.
 
 Run RA-TSR with no arguments to query it. Run STOPTSR to unload it. Unload may
 refuse if a later TSR owns one of its interrupt vectors or a transfer is active.
+The query shows INT 08h/1Ch/28h, watchdog fallback, packet receive/drop/send,
+last-activity, and PIC-mask counters for diagnosing difficult applications.
+
+RA-TSR normally works from the BIOS INT 1Ch tick. Its INT 08h watchdog chains
+the BIOS first and supplies one bounded non-DOS worker step if an application
+replaces INT 1Ch without chaining. It cannot remain reachable if an application
+masks IRQ0 or the Ethernet IRQ, disables interrupts, or replaces INT 08h without
+chaining.
 
 RAGENT.EXE is the foreground alternative. It also reads IPADDR and PACKETINT
 from MTCPCFG when those command-line positions are omitted or '-':

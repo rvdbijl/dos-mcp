@@ -20,5 +20,13 @@ const dm_u8 *dm_packet_address(void);
 extern dm_u8 dm_packet_interrupt;
 extern dm_u16 dm_packet_ip_handle;
 extern dm_u16 dm_packet_arp_handle;
+extern volatile dm_u8 dm_receive_ready;
+extern volatile dm_u16 dm_receive_length;
+extern volatile dm_u16 dm_receive_allocations;
+extern volatile dm_u16 dm_receive_completions;
+extern volatile dm_u16 dm_receive_drops;
+extern volatile dm_u16 dm_receive_last_bios_tick;
+extern volatile dm_u16 dm_send_attempts;
+extern volatile dm_u16 dm_send_failures;
 
 #endif

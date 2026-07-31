@@ -156,12 +156,30 @@ local recovery plan.
 
 ## `RA-TSR /U` refuses to unload
 
-The resident agent only unloads when its `INT 1Ch`, `INT 28h`, and `INT 2Fh`
-vectors are still the active top-of-chain handlers and no transfer is active.
+The resident agent only unloads when its `INT 08h`, `INT 1Ch`, `INT 28h`, and
+`INT 2Fh` vectors are still the active top-of-chain handlers and no transfer is
+active.
 If another TSR was loaded afterward, unload that program first in reverse
 order and retry. If a transfer is active, finish/abort it or wait for session
 expiry and DOS-idle cleanup. Do not force-free the resident PSP; reboot
 normally if the chain cannot be restored safely.
+
+## RA-TSR disappears during a diagnostic or game
+
+Run `RA-TSR` without arguments after returning to DOS and compare its counters:
+
+- increasing `int08` with a stationary `int1c` and increasing `fallback`
+  means the foreground program bypassed `INT 1Ch`; the watchdog is operating;
+- increasing timer counters with stationary packet `allocate`/`complete`
+  counts means the NIC IRQ, packet driver, or AT PIC cascade stopped delivery;
+- increasing packet completion with stationary worker counts indicates a
+  resident scheduler or nested-work problem;
+- stationary `int08` and `int1c` means interrupts/IRQ0 were masked or another
+  program replaced the hardware timer without chaining.
+
+The PIC bytes are snapshots, not proof of which physical IRQ the packet driver
+uses. Record the adapter IRQ separately. A software packet-driver vector such
+as `60h` is not the NIC's hardware IRQ.
 
 ## Discovery does not show a resident target
 

@@ -14,6 +14,12 @@ static dm_u8 ip_type[2] = {0x08, 0x00};
 static dm_u8 arp_type[2] = {0x08, 0x06};
 volatile dm_u8 dm_receive_ready;
 volatile dm_u16 dm_receive_length;
+volatile dm_u16 dm_receive_allocations;
+volatile dm_u16 dm_receive_completions;
+volatile dm_u16 dm_receive_drops;
+volatile dm_u16 dm_receive_last_bios_tick;
+volatile dm_u16 dm_send_attempts;
+volatile dm_u16 dm_send_failures;
 dm_u8 dm_receive_buffer[DM_PACKET_MAX_FRAME];
 
 static int packet_access(const dm_u8 type[2], dm_u16 *handle);
@@ -29,6 +35,13 @@ int dm_packet_open(dm_u8 interrupt_number)
         return -1;
     dm_packet_interrupt = interrupt_number;
     dm_receive_ready = 0;
+    dm_receive_length = 0;
+    dm_receive_allocations = 0;
+    dm_receive_completions = 0;
+    dm_receive_drops = 0;
+    dm_receive_last_bios_tick = 0;
+    dm_send_attempts = 0;
+    dm_send_failures = 0;
     dm_packet_ip_handle = DM_PACKET_INVALID_HANDLE;
     dm_packet_arp_handle = DM_PACKET_INVALID_HANDLE;
     if (packet_access(ip_type, &dm_packet_ip_handle) != 0)
@@ -68,16 +81,23 @@ int dm_packet_send(const dm_u8 *frame, dm_u16 length)
 {
     union REGPACK registers;
 
+    ++dm_send_attempts;
     if (dm_packet_ip_handle == DM_PACKET_INVALID_HANDLE
-        || length < 14 || length > DM_PACKET_MAX_FRAME)
+        || length < 14 || length > DM_PACKET_MAX_FRAME) {
+        ++dm_send_failures;
         return -1;
+    }
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = 0x0400;
     registers.w.cx = length;
     registers.w.ds = _FP_SEG(frame);
     registers.w.si = _FP_OFF(frame);
     intr(dm_packet_interrupt, &registers);
-    return (registers.w.flags & INTR_CF) ? -2 : 0;
+    if (registers.w.flags & INTR_CF) {
+        ++dm_send_failures;
+        return -2;
+    }
+    return 0;
 }
 
 const dm_u8 *dm_packet_receive(dm_u16 *length)

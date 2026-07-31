@@ -18,7 +18,7 @@ src/dos_mcp/
 dos/
   agent/ragent.c        foreground operation loop and shell
                          and conditional resident worker
-  agent/ratsr_hooks.asm resident interrupt hooks and private-stack switch
+  agent/ratsr_hooks.asm INT 08h/1Ch/28h/2Fh hooks and private-stack switch
   agent/dmnet.c         ARP, IPv4, and UDP
   agent/dmpacket.c      packet-driver downcalls and receive state
   agent/dmpacket_rx.asm register-safe receive upcall

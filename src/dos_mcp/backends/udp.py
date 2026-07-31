@@ -37,6 +37,7 @@ from dos_mcp.protocol import (
     Packet,
     PacketError,
     Phase,
+    ResidentDiagnosticsMessage,
     ScreenMessage,
     StatusMessage,
     TransferBeginResponse,
@@ -148,6 +149,12 @@ class UdpBackend(Backend):
             port_read=bool(flags & Capability.PORT_READ),
             port_write=bool(flags & Capability.PORT_WRITE),
             reboot=bool(flags & Capability.REBOOT),
+        )
+
+    def get_resident_diagnostics(self) -> ResidentDiagnosticsMessage:
+        """Return RA-TSR scheduler/packet counters for commissioning."""
+        return ResidentDiagnosticsMessage.decode(
+            self._request(Opcode.GET_DIAGNOSTICS)
         )
 
     def capture_screen(self) -> TextScreen:

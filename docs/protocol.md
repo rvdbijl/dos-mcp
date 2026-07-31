@@ -23,6 +23,7 @@ Operations:
 | 11–13 | `FILE_WRITE_BEGIN/BLOCK/COMMIT` | RA-TSR and opted-in simulator |
 | 14 | `FILE_ABORT` | active file transfer |
 | 15–17 | `GRAPHICS_BEGIN/BLOCK/END` | RA-TSR and capable simulator |
+| 18 | `GET_DIAGNOSTICS` | RA-TSR commissioning |
 
 ## Datagram envelope
 
@@ -316,6 +317,30 @@ Layouts:
 | 6 | packed 8-bpp bytes |
 
 The wire carries raw framebuffer bytes, not a PNG or rendered image.
+
+## Resident diagnostics
+
+`GET_DIAGNOSTICS` has an empty request and is implemented only by RA-TSR.
+Its fixed version-1 response is:
+
+```text
+diagnostics_version:u8 (=1), state_flags:u8
+int08_entries:u16, int1c_entries:u16, int28_entries:u16
+worker_runs:u16, fallback_runs:u16, busy_skips:u16
+receive_allocations:u16, receive_completions:u16, receive_drops:u16
+send_attempts:u16, send_failures:u16
+last_receive_BIOS_tick_low:u16, last_worker_BIOS_tick_low:u16
+worker_ticks:u16, receive_length:u16
+master_PIC_mask:u8, slave_PIC_mask:u8
+last_protocol_result:i16, last_send_result:i16
+last_opcode:u8, reserved:u8 (=0)
+```
+
+State bits `0..3` report current ownership of `INT 08h`, `INT 1Ch`, `INT 28h`,
+and `INT 2Fh`. Bits `4..7` report resident enabled, receive-buffer ready,
+session active, and response pending. Counters and tick lows wrap at 16 bits;
+consumers compare modular deltas rather than treating them as lifetime totals.
+PIC masks are diagnostic snapshots and do not identify the NIC hardware IRQ.
 
 ## Errors
 

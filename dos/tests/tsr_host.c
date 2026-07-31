@@ -13,6 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void (__interrupt __far *saved_int1c)(void);
+
+static void __interrupt __far suppress_int1c(void)
+{
+    /* Deliberately do not chain: exercises RA-TSR's INT 08h watchdog. */
+}
+
 int main(void)
 {
     char command[128];
@@ -45,7 +52,17 @@ int main(void)
             putchar('\n');
             if (stricmp(command, "EXIT") == 0)
                 break;
-            if (stricmp(command, "GFX13") == 0) {
+            if (stricmp(command, "CUT1C") == 0) {
+                if (!saved_int1c) {
+                    saved_int1c = _dos_getvect(0x1C);
+                    _dos_setvect(0x1C, suppress_int1c);
+                }
+            } else if (stricmp(command, "REST1C") == 0) {
+                if (saved_int1c) {
+                    _dos_setvect(0x1C, saved_int1c);
+                    saved_int1c = 0;
+                }
+            } else if (stricmp(command, "GFX13") == 0) {
                 union REGS input;
                 union REGS output;
                 unsigned char __far *video =
@@ -83,5 +100,7 @@ int main(void)
             fflush(stdout);
         }
     }
+    if (saved_int1c)
+        _dos_setvect(0x1C, saved_int1c);
     return 0;
 }

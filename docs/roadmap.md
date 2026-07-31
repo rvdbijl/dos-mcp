@@ -30,6 +30,9 @@
 - [x] Protocol-v2 odd-frame padding for word-wide NE2000 drivers.
 - [x] Exact DOSBox-X 64 KiB VGA mode 13h capture.
 - [x] DOSBox-X resident status/text/keys/file/unload integration.
+- [x] Chained `INT 08h` watchdog for non-chaining `INT 1Ch` applications.
+- [x] Scheduler, packet callback, send, activity, PIC, and vector diagnostics.
+- [x] DOSBox-X regression that suppresses/restores `INT 1Ch` while UDP remains live.
 
 ### Discovery and multiple systems
 
@@ -56,6 +59,7 @@ PicoMEM/PicoMEM2 code remains intentionally unimplemented.
 - [ ] Validate `INT 28h` file dispatch and critical-error behavior by DOS
   version.
 - [ ] Validate unload ordering with common memory managers and TSR stacks.
+- [ ] Catalogue IRQ0/NIC/PIC masking behavior in representative diagnostics and games.
 - [ ] Add distinct-plane fixtures for CGA, Hercules, EGA, and VGA planar modes.
 - [ ] Fuzz protocol, discovery, path, and transfer codecs.
 - [ ] Independent review of 16-bit arithmetic, far pointers, vector hooks, and

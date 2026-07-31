@@ -1,8 +1,10 @@
-; RA-TSR timer, DOS-idle, and multiplex interrupt hooks.
+; RA-TSR hardware timer, BIOS timer, DOS-idle, and multiplex hooks.
 ;
+; INT 08h chains the prior BIOS timer first.  If that chain did not invoke our
+; INT 1Ch handler, INT 08h runs one bounded non-DOS worker step as a watchdog.
 ; INT 1Ch and INT 28h switch to a private resident stack before entering C.
-; The timer entry never permits DOS file work. INT 28h permits the bounded DOS
-; file operations that are safe during the DOS idle interrupt.
+; Timer entries never permit DOS file work. INT 28h permits only the bounded
+; DOS file operations that are safe during the DOS idle interrupt.
 ;
 ; INT 2Fh AX=D05Ah provides install/uninstall discovery:
 ;   BX=0 -> AX=5A5Ah, BX=PSP, CX:DX=INT1C handler off:seg,
@@ -16,14 +18,28 @@ DGROUP  GROUP   _DATA,_BSS
 
 _DATA   SEGMENT WORD PUBLIC 'DATA'
         EXTRN   _ratsr_old_int1c:DWORD
+        EXTRN   _ratsr_old_int08:DWORD
         EXTRN   _ratsr_old_int28:DWORD
         EXTRN   _ratsr_old_int2f:DWORD
         EXTRN   _ratsr_psp:WORD
         EXTRN   _ratsr_ticks:WORD
+        EXTRN   _ratsr_int08_entries:WORD
+        EXTRN   _ratsr_int1c_entries:WORD
+        EXTRN   _ratsr_int28_entries:WORD
+        EXTRN   _ratsr_worker_runs:WORD
+        EXTRN   _ratsr_fallback_runs:WORD
+        EXTRN   _ratsr_busy_skips:WORD
+        EXTRN   _ratsr_last_worker_bios_tick:WORD
         EXTRN   _ratsr_last_protocol_result:WORD
         EXTRN   _ratsr_last_send_result:WORD
         EXTRN   _dm_receive_ready:BYTE
         EXTRN   _dm_receive_length:WORD
+        EXTRN   _dm_receive_allocations:WORD
+        EXTRN   _dm_receive_completions:WORD
+        EXTRN   _dm_receive_drops:WORD
+        EXTRN   _dm_receive_last_bios_tick:WORD
+        EXTRN   _dm_send_attempts:WORD
+        EXTRN   _dm_send_failures:WORD
         EXTRN   _dm_packet_interrupt:BYTE
         EXTRN   _dm_packet_ip_handle:WORD
         EXTRN   _dm_packet_arp_handle:WORD
@@ -48,15 +64,19 @@ _TEXT   SEGMENT BYTE PUBLIC 'CODE'
         EXTRN   ratsr_idle_worker_:NEAR
         EXTRN   ratsr_prepare_unload_:NEAR
         PUBLIC  ratsr_idle_handler_
+        PUBLIC  ratsr_timer_handler_
         PUBLIC  ratsr_dos_idle_handler_
         PUBLIC  ratsr_multiplex_handler_
         PUBLIC  ratsr_bios_queue_word_
         PUBLIC  ratsr_set_old_vectors_
+        PUBLIC  ratsr_set_old_int08_
         PUBLIC  ratsr_set_old_int28_
 
+chain_int08     DD      0
 chain_int1c     DD      0
 chain_int28     DD      0
 chain_int2f     DD      0
+int08_int1c_before DW   0
 
 ; Watcom register convention:
 ;   AX=INT 1Ch offset, DX=INT 1Ch segment
@@ -68,6 +88,13 @@ ratsr_set_old_vectors_ PROC NEAR
         mov     word ptr cs:[chain_int2f+2],cx
         ret
 ratsr_set_old_vectors_ ENDP
+
+; AX=INT 08h offset, DX=INT 08h segment
+ratsr_set_old_int08_ PROC NEAR
+        mov     word ptr cs:[chain_int08],ax
+        mov     word ptr cs:[chain_int08+2],dx
+        ret
+ratsr_set_old_int08_ ENDP
 
 ; AX=INT 28h offset, DX=INT 28h segment
 ratsr_set_old_int28_ PROC NEAR
@@ -131,7 +158,24 @@ queue_done:
         ret
 ratsr_bios_queue_word_ ENDP
 
-ratsr_idle_handler_ PROC FAR
+; Hardware timer watchdog.  The old BIOS handler is called before any worker
+; activity.  A conventional BIOS handler invokes INT 1Ch; if our INT 1Ch entry
+; counter did not advance, the application has bypassed that cooperative hook
+; and this handler supplies one non-DOS worker opportunity.
+ratsr_timer_handler_ PROC FAR
+        push    ax
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        inc     word ptr [_ratsr_int08_entries]
+        mov     ax,word ptr [_ratsr_int1c_entries]
+        mov     word ptr cs:[int08_int1c_before],ax
+        pop     ds
+        pop     ax
+
+        pushf
+        call    dword ptr cs:[chain_int08]
+
         push    ax
         push    bx
         push    cx
@@ -143,9 +187,14 @@ ratsr_idle_handler_ PROC FAR
         push    es
         mov     ax,DGROUP
         mov     ds,ax
+        mov     bx,word ptr [_ratsr_int1c_entries]
+        cmp     bx,word ptr cs:[int08_int1c_before]
+        jne     timer_done
         cmp     byte ptr [idle_active],0
-        jne     idle_chain
+        jne     timer_busy
         mov     byte ptr [idle_active],1
+        inc     word ptr [_ratsr_worker_runs]
+        inc     word ptr [_ratsr_fallback_runs]
         mov     word ptr [saved_ss],ss
         mov     word ptr [saved_sp],sp
         cli
@@ -160,6 +209,59 @@ ratsr_idle_handler_ PROC FAR
         mov     ss,ax
         mov     sp,word ptr [saved_sp]
         mov     byte ptr [idle_active],0
+        jmp     short timer_done
+
+timer_busy:
+        inc     word ptr [_ratsr_busy_skips]
+
+timer_done:
+        pop     es
+        pop     ds
+        pop     bp
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        iret
+ratsr_timer_handler_ ENDP
+
+ratsr_idle_handler_ PROC FAR
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    bp
+        push    ds
+        push    es
+        mov     ax,DGROUP
+        mov     ds,ax
+        inc     word ptr [_ratsr_int1c_entries]
+        cmp     byte ptr [idle_active],0
+        jne     idle_busy
+        mov     byte ptr [idle_active],1
+        inc     word ptr [_ratsr_worker_runs]
+        mov     word ptr [saved_ss],ss
+        mov     word ptr [saved_sp],sp
+        cli
+        mov     ss,ax
+        mov     sp,offset resident_top
+        cld
+        sti
+        xor     ax,ax
+        call    ratsr_idle_worker_
+        cli
+        mov     ax,word ptr [saved_ss]
+        mov     ss,ax
+        mov     sp,word ptr [saved_sp]
+        mov     byte ptr [idle_active],0
+        jmp     short idle_chain
+
+idle_busy:
+        inc     word ptr [_ratsr_busy_skips]
 
 idle_chain:
         pop     es
@@ -186,9 +288,11 @@ ratsr_dos_idle_handler_ PROC FAR
         push    es
         mov     ax,DGROUP
         mov     ds,ax
+        inc     word ptr [_ratsr_int28_entries]
         cmp     byte ptr [idle_active],0
-        jne     dos_idle_chain
+        jne     dos_idle_busy
         mov     byte ptr [idle_active],1
+        inc     word ptr [_ratsr_worker_runs]
         mov     word ptr [saved_ss],ss
         mov     word ptr [saved_sp],sp
         cli
@@ -203,6 +307,10 @@ ratsr_dos_idle_handler_ PROC FAR
         mov     ss,ax
         mov     sp,word ptr [saved_sp]
         mov     byte ptr [idle_active],0
+        jmp     short dos_idle_chain
+
+dos_idle_busy:
+        inc     word ptr [_ratsr_busy_skips]
 
 dos_idle_chain:
         pop     es
@@ -230,6 +338,14 @@ ratsr_multiplex_handler_ PROC FAR
         je      multiplex_int28
         cmp     bx,4
         je      multiplex_packet
+        cmp     bx,5
+        je      multiplex_int08
+        cmp     bx,6
+        je      multiplex_scheduler
+        cmp     bx,7
+        je      multiplex_packet_counts
+        cmp     bx,8
+        je      multiplex_activity
         xor     ax,ax
         iret
 
@@ -302,6 +418,61 @@ multiplex_packet:
         mov     cx,word ptr [_dm_packet_arp_handle]
         xor     dx,dx
         mov     dl,byte ptr [_dm_packet_interrupt]
+        pop     ds
+        mov     ax,05A5Ah
+        iret
+
+multiplex_int08:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        mov     si,word ptr [_ratsr_old_int08]
+        mov     di,word ptr [_ratsr_old_int08+2]
+        pop     ds
+        mov     ax,05A5Ah
+        mov     cx,offset ratsr_timer_handler_
+        mov     dx,cs
+        iret
+
+multiplex_scheduler:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        mov     bx,word ptr [_ratsr_int08_entries]
+        mov     cx,word ptr [_ratsr_int1c_entries]
+        mov     dx,word ptr [_ratsr_int28_entries]
+        mov     si,word ptr [_ratsr_worker_runs]
+        mov     di,word ptr [_ratsr_fallback_runs]
+        pop     ds
+        mov     ax,05A5Ah
+        iret
+
+multiplex_packet_counts:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        mov     bx,word ptr [_ratsr_busy_skips]
+        mov     cx,word ptr [_dm_receive_allocations]
+        mov     dx,word ptr [_dm_receive_completions]
+        mov     si,word ptr [_dm_receive_drops]
+        mov     di,word ptr [_dm_send_attempts]
+        pop     ds
+        mov     ax,05A5Ah
+        iret
+
+multiplex_activity:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        mov     bx,word ptr [_dm_send_failures]
+        mov     cx,word ptr [_dm_receive_last_bios_tick]
+        mov     dx,word ptr [_ratsr_last_worker_bios_tick]
+        in      al,21h
+        mov     ah,al
+        in      al,0A1h
+        xchg    al,ah
+        mov     si,ax
+        mov     di,word ptr [_dm_receive_length]
         pop     ds
         mov     ax,05A5Ah
         iret

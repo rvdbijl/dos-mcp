@@ -14,6 +14,8 @@ from dos_mcp.protocol import (
     KeyRequest,
     KeyResponse,
     Phase,
+    ResidentDiagnosticFlag,
+    ResidentDiagnosticsMessage,
     ScreenMessage,
     StatusMessage,
     TransferBeginResponse,
@@ -40,6 +42,34 @@ from dos_mcp.protocol import (
         ),
         KeyRequest(b"DIR", (KeyCode.ENTER,), 10),
         KeyResponse(3, 1, 99),
+        ResidentDiagnosticsMessage(
+            version=1,
+            flags=(
+                ResidentDiagnosticFlag.OWNS_INT08
+                | ResidentDiagnosticFlag.OWNS_INT1C
+                | ResidentDiagnosticFlag.ENABLED
+            ),
+            int08_entries=100,
+            int1c_entries=99,
+            int28_entries=5,
+            worker_runs=104,
+            fallback_runs=1,
+            busy_skips=2,
+            receive_allocations=10,
+            receive_completions=9,
+            receive_drops=1,
+            send_attempts=8,
+            send_failures=0,
+            last_receive_bios_tick=1234,
+            last_worker_bios_tick=1235,
+            worker_ticks=104,
+            receive_length=60,
+            master_pic_mask=0xF8,
+            slave_pic_mask=0xFB,
+            last_protocol_result=0,
+            last_send_result=-2,
+            last_opcode=18,
+        ),
     ],
 )
 def test_fixed_messages_round_trip(value: object) -> None:

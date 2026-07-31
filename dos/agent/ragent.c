@@ -60,6 +60,15 @@
 #define LAYOUT_PLANAR_4BPP 4
 #define LAYOUT_PLANAR_1BPP 5
 #define LAYOUT_PACKED_8BPP 6
+#define DIAGNOSTICS_VERSION 1
+#define DIAG_OWNS_INT08 0x01
+#define DIAG_OWNS_INT1C 0x02
+#define DIAG_OWNS_INT28 0x04
+#define DIAG_OWNS_INT2F 0x08
+#define DIAG_ENABLED 0x10
+#define DIAG_RECEIVE_READY 0x20
+#define DIAG_SESSION_ACTIVE 0x40
+#define DIAG_RESPONSE_PENDING 0x80
 #endif
 
 typedef struct agent_session {
@@ -103,12 +112,20 @@ static dm_u8 running = 1;
 static dm_u32 agent_start_ticks;
 
 #ifdef RA_TSR
+void (__interrupt __far *ratsr_old_int08)(void);
 void (__interrupt __far *ratsr_old_int1c)(void);
 void (__interrupt __far *ratsr_old_int28)(void);
 void (__interrupt __far *ratsr_old_int2f)(void);
 dm_u16 ratsr_psp;
 volatile dm_u8 ratsr_enabled;
 volatile dm_u16 ratsr_ticks;
+volatile dm_u16 ratsr_int08_entries;
+volatile dm_u16 ratsr_int1c_entries;
+volatile dm_u16 ratsr_int28_entries;
+volatile dm_u16 ratsr_worker_runs;
+volatile dm_u16 ratsr_fallback_runs;
+volatile dm_u16 ratsr_busy_skips;
+volatile dm_u16 ratsr_last_worker_bios_tick;
 volatile int ratsr_last_protocol_result;
 volatile dm_u8 ratsr_last_opcode;
 volatile int ratsr_last_send_result;
@@ -146,6 +163,7 @@ static dm_u16 text_capture_segment;
 static dm_u16 text_capture_offset;
 static dm_u16 text_capture_cells;
 extern void __interrupt __far ratsr_idle_handler(void);
+extern void __interrupt __far ratsr_timer_handler(void);
 extern void __interrupt __far ratsr_dos_idle_handler(void);
 extern void __interrupt __far ratsr_multiplex_handler(void);
 extern int ratsr_bios_queue_word(dm_u16 word);
@@ -155,6 +173,7 @@ extern void ratsr_set_old_vectors(
     dm_u16 int2f_offset,
     dm_u16 int2f_segment
 );
+extern void ratsr_set_old_int08(dm_u16 offset, dm_u16 segment);
 extern void ratsr_set_old_int28(dm_u16 offset, dm_u16 segment);
 extern char __far ratsr_resident_end;
 #endif
@@ -200,6 +219,13 @@ static void send_error(dm_u8 opcode, dm_u16 id, dm_u16 code, const char *message
 static void resend_cached(void);
 static dm_u16 build_status(dm_u8 *output);
 static dm_u16 build_capabilities(dm_u8 *output);
+#ifdef RA_TSR
+static dm_u16 build_diagnostics(dm_u8 *output);
+static dm_u8 owns_vector(
+    dm_u8 interrupt_number,
+    void (__interrupt __far *handler)(void)
+);
+#endif
 #ifndef RA_TSR
 static dm_u16 capture_screen(dm_u8 *output);
 #else
@@ -344,14 +370,46 @@ int main(int argc, char **argv)
     input.x.bx = 0;
     int86(0x2F, &input, &output);
     if (output.x.ax == TSR_REPLY) {
+        dm_u16 ticks;
+        dm_u16 receive_ready;
+        dm_u16 receive_length;
+        int protocol_result;
+        int send_result;
+
         delay(1000);
         memset(&input, 0, sizeof(input));
         input.x.ax = TSR_MULTIPLEX;
         input.x.bx = 2;
         int86(0x2F, &input, &output);
+        ticks = output.x.bx;
+        receive_ready = output.x.cx;
+        receive_length = output.x.dx;
+        protocol_result = (int)output.x.si;
+        send_result = (int)output.x.di;
         printf("RA-TSR: installed, ticks %u, receive %u/%u, protocol %d/%d\n",
+            ticks, receive_ready, receive_length,
+            protocol_result, send_result);
+        memset(&input, 0, sizeof(input));
+        input.x.ax = TSR_MULTIPLEX;
+        input.x.bx = 6;
+        int86(0x2F, &input, &output);
+        printf("  timer: int08 %u, int1c %u, int28 %u, workers %u, fallback %u\n",
             output.x.bx, output.x.cx, output.x.dx,
-            (int)output.x.si, (int)output.x.di);
+            output.x.si, output.x.di);
+        memset(&input, 0, sizeof(input));
+        input.x.ax = TSR_MULTIPLEX;
+        input.x.bx = 7;
+        int86(0x2F, &input, &output);
+        printf("  packet: busy %u, allocate %u, complete %u, drop %u, send %u\n",
+            output.x.bx, output.x.cx, output.x.dx,
+            output.x.si, output.x.di);
+        memset(&input, 0, sizeof(input));
+        input.x.ax = TSR_MULTIPLEX;
+        input.x.bx = 8;
+        int86(0x2F, &input, &output);
+        printf("  activity: send failures %u, last rx/worker %u/%u, PIC %02X/%02X\n",
+            output.x.bx, output.x.cx, output.x.dx,
+            output.x.si & 0xFF, output.x.si >> 8);
         return 2;
     }
     if (parse_credential(argc >= 2 ? argv[1] : 0, base_key, &open_mode) != 0) {
@@ -393,6 +451,7 @@ int main(int argc, char **argv)
     indos_flag =
         (volatile dm_u8 __far *)MK_FP(registers.w.es, registers.w.bx);
     critical_error_flag = indos_flag - 1;
+    ratsr_old_int08 = _dos_getvect(0x08);
     ratsr_old_int1c = _dos_getvect(0x1C);
     ratsr_old_int28 = _dos_getvect(0x28);
     ratsr_old_int2f = _dos_getvect(0x2F);
@@ -402,12 +461,17 @@ int main(int argc, char **argv)
         _FP_OFF(ratsr_old_int2f),
         _FP_SEG(ratsr_old_int2f)
     );
+    ratsr_set_old_int08(
+        _FP_OFF(ratsr_old_int08),
+        _FP_SEG(ratsr_old_int08)
+    );
     ratsr_set_old_int28(
         _FP_OFF(ratsr_old_int28),
         _FP_SEG(ratsr_old_int28)
     );
     ratsr_enabled = 1;
     _dos_setvect(0x1C, ratsr_idle_handler);
+    _dos_setvect(0x08, ratsr_timer_handler);
     _dos_setvect(0x28, ratsr_dos_idle_handler);
     _dos_setvect(0x2F, ratsr_multiplex_handler);
     printf("RA-TSR 0.2 \"%s\" installed at %u.%u.%u.%u:%u, packet int 0x%02X, video %u, root %s, access %s%s\n",
@@ -885,6 +949,13 @@ static void process_request(
             return;
         }
         break;
+    case DM_OP_GET_DIAGNOSTICS:
+        if (length) {
+            send_error(opcode, id, 6, "diagnostic payload must be empty");
+            return;
+        }
+        response_length = build_diagnostics(screen_buffer);
+        break;
 #endif
     default:
         send_error(opcode, id, 5, "unsupported operation");
@@ -1052,6 +1123,65 @@ static dm_u16 build_capabilities(dm_u8 *output)
     dm_put_u16(output + 9, 15);
     return 11;
 }
+
+#ifdef RA_TSR
+static dm_u16 build_diagnostics(dm_u8 *output)
+{
+    dm_u8 flags = 0;
+
+    if (owns_vector(0x08, ratsr_timer_handler))
+        flags |= DIAG_OWNS_INT08;
+    if (owns_vector(0x1C, ratsr_idle_handler))
+        flags |= DIAG_OWNS_INT1C;
+    if (owns_vector(0x28, ratsr_dos_idle_handler))
+        flags |= DIAG_OWNS_INT28;
+    if (owns_vector(0x2F, ratsr_multiplex_handler))
+        flags |= DIAG_OWNS_INT2F;
+    if (ratsr_enabled)
+        flags |= DIAG_ENABLED;
+    if (dm_receive_ready)
+        flags |= DIAG_RECEIVE_READY;
+    if (session.active)
+        flags |= DIAG_SESSION_ACTIVE;
+    if (session.response_pending)
+        flags |= DIAG_RESPONSE_PENDING;
+    output[0] = DIAGNOSTICS_VERSION;
+    output[1] = flags;
+    dm_put_u16(output + 2, ratsr_int08_entries);
+    dm_put_u16(output + 4, ratsr_int1c_entries);
+    dm_put_u16(output + 6, ratsr_int28_entries);
+    dm_put_u16(output + 8, ratsr_worker_runs);
+    dm_put_u16(output + 10, ratsr_fallback_runs);
+    dm_put_u16(output + 12, ratsr_busy_skips);
+    dm_put_u16(output + 14, dm_receive_allocations);
+    dm_put_u16(output + 16, dm_receive_completions);
+    dm_put_u16(output + 18, dm_receive_drops);
+    dm_put_u16(output + 20, dm_send_attempts);
+    dm_put_u16(output + 22, dm_send_failures);
+    dm_put_u16(output + 24, dm_receive_last_bios_tick);
+    dm_put_u16(output + 26, ratsr_last_worker_bios_tick);
+    dm_put_u16(output + 28, ratsr_ticks);
+    dm_put_u16(output + 30, dm_receive_length);
+    output[32] = (dm_u8)inp(0x21);
+    output[33] = (dm_u8)inp(0xA1);
+    dm_put_u16(output + 34, (dm_u16)ratsr_last_protocol_result);
+    dm_put_u16(output + 36, (dm_u16)ratsr_last_send_result);
+    output[38] = ratsr_last_opcode;
+    output[39] = 0;
+    return 40;
+}
+
+static dm_u8 owns_vector(
+    dm_u8 interrupt_number,
+    void (__interrupt __far *handler)(void)
+)
+{
+    volatile dm_u16 __far *vector =
+        (volatile dm_u16 __far *)MK_FP(0, (dm_u16)interrupt_number * 4);
+
+    return vector[0] == _FP_OFF(handler) && vector[1] == _FP_SEG(handler);
+}
+#endif
 
 #ifndef RA_TSR
 static dm_u16 capture_screen(dm_u8 *output)
@@ -1394,6 +1524,7 @@ void ratsr_idle_worker(dm_u16 dos_idle)
 
     if (!ratsr_enabled)
         return;
+    ratsr_last_worker_bios_tick = (dm_u16)read_bios_ticks();
     if (!dos_idle)
         ++ratsr_ticks;
     if (session.active
@@ -1481,10 +1612,13 @@ void ratsr_prepare_unload(void)
 static int uninstall_tsr(void)
 {
     union REGPACK registers;
+    void (__interrupt __far *current08)(void);
     void (__interrupt __far *current1c)(void);
     void (__interrupt __far *current28)(void);
     void (__interrupt __far *current2f)(void);
     dm_u16 resident_psp;
+    dm_u16 old08_offset;
+    dm_u16 old08_segment;
     dm_u16 old1c_offset;
     dm_u16 old1c_segment;
     dm_u16 old28_offset;
@@ -1504,6 +1638,7 @@ static int uninstall_tsr(void)
         return 1;
     }
     resident_psp = registers.w.bx;
+    current08 = _dos_getvect(0x08);
     current1c = _dos_getvect(0x1C);
     current28 = _dos_getvect(0x28);
     current2f = _dos_getvect(0x2F);
@@ -1514,6 +1649,18 @@ static int uninstall_tsr(void)
         puts("RA-TSR: cannot unload; another TSR is above it");
         return 2;
     }
+    memset(&registers, 0, sizeof(registers));
+    registers.w.ax = TSR_MULTIPLEX;
+    registers.w.bx = 5;
+    intr(0x2F, &registers);
+    if (registers.w.ax != TSR_REPLY
+        || _FP_OFF(current08) != registers.w.cx
+        || _FP_SEG(current08) != registers.w.dx) {
+        puts("RA-TSR: cannot unload; another TSR is above INT 08h");
+        return 2;
+    }
+    old08_offset = registers.w.si;
+    old08_segment = registers.w.di;
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = TSR_MULTIPLEX;
     registers.w.bx = 3;
@@ -1558,6 +1705,10 @@ static int uninstall_tsr(void)
         puts("RA-TSR: packet driver refused endpoint release; reboot required");
         return 3;
     }
+    _dos_setvect(
+        0x08,
+        (void (__interrupt __far *)(void))MK_FP(old08_segment, old08_offset)
+    );
     _dos_setvect(
         0x1C,
         (void (__interrupt __far *)(void))MK_FP(old1c_segment, old1c_offset)

@@ -81,6 +81,9 @@ packet IRQ/upcall
    ▼
 resident fixed receive buffer
    │
+INT 08h hardware timer watchdog
+   │ chains BIOS first; falls back only if RA INT 1Ch was bypassed
+   ▼
 INT 1Ch timer entry / INT 28h DOS-idle entry
    │ shared nested-work guard + private stack
    │
@@ -93,9 +96,15 @@ INT 1Ch timer entry / INT 28h DOS-idle entry
           └── raw graphics block read
 ```
 
-The old `INT 1Ch`, `INT 28h`, and `INT 2Fh` vectors are retained and chained.
-`INT 2Fh` provides installed-state discovery and a local unload handshake.
-Unload refuses if any vector is no longer owned by RA-TSR.
+The old `INT 08h`, `INT 1Ch`, `INT 28h`, and `INT 2Fh` vectors are retained
+and chained. `INT 08h` calls the prior BIOS handler first. That handler
+normally invokes RA-TSR through `INT 1Ch`; if the RA `INT 1Ch` entry counter
+did not advance, one bounded non-DOS worker step runs after the BIOS handler
+returns. This preserves BIOS timekeeping and PIC acknowledgement while
+covering foreground programs that replace `INT 1Ch` without chaining.
+
+`INT 2Fh` provides installed-state discovery, counters, and a local unload
+handshake. Unload refuses if any vector is no longer owned by RA-TSR.
 
 The private resident stack prevents the interrupted application's stack from
 being consumed by protocol code. An active flag prevents nested workers.

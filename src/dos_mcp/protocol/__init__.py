@@ -9,6 +9,7 @@ from .constants import (
     MessageKind,
     Opcode,
     Phase,
+    ResidentDiagnosticFlag,
 )
 from .crypto import (
     OPEN_MODE_KEY,
@@ -26,6 +27,7 @@ from .messages import (
     HelloResponse,
     KeyRequest,
     KeyResponse,
+    ResidentDiagnosticsMessage,
     ScreenMessage,
     StatusMessage,
     TransferBeginResponse,
@@ -55,6 +57,8 @@ __all__ = [
     "Packet",
     "PacketError",
     "Phase",
+    "ResidentDiagnosticFlag",
+    "ResidentDiagnosticsMessage",
     "ScreenMessage",
     "StatusMessage",
     "TransferBeginResponse",

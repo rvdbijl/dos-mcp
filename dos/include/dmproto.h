@@ -40,7 +40,8 @@ typedef unsigned long dm_u32;
 #define DM_OP_GRAPHICS_BEGIN 15
 #define DM_OP_GRAPHICS_BLOCK 16
 #define DM_OP_GRAPHICS_END 17
-#define DM_OP_MAX DM_OP_GRAPHICS_END
+#define DM_OP_GET_DIAGNOSTICS 18
+#define DM_OP_MAX DM_OP_GET_DIAGNOSTICS
 
 #define DM_OK 0
 #define DM_ERR_TRUNCATED -1

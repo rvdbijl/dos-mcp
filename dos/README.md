@@ -177,6 +177,7 @@ RA-TSR supports:
 - standard CGA/Hercules/EGA/VGA raw capture;
 - sequential bounded download and temp-file/CRC upload commit;
 - disconnected named local discovery;
+- INT 08h watchdog and resident scheduler/packet diagnostics;
 - explicit unload.
 
 Query:
@@ -191,8 +192,9 @@ Unload:
 RA-TSR /U
 ```
 
-Unload refuses when a newer TSR owns one of RA-TSR's vectors or a transfer is
-active. See
+The query prints timer/watchdog, packet callback/drop/send, last-activity, and
+PIC-mask counters. Unload refuses when a newer TSR owns one of RA-TSR's four
+vectors or a transfer is active. See
 [`docs/tsr.md`](../docs/tsr.md) for the resident model, path policy, and
 compatibility boundary.
 
@@ -247,8 +249,9 @@ tools/test_dosbox_x_tsr.sh
 
 The resident harness verifies 16-bit protocol vectors, load, credentialed
 session, status/capabilities, 32/256-byte packet responses, exact streamed
-80×25 text capture, BIOS-key `VER`, exact patterned 64 KiB VGA mode 13h
-capture, 2.5 KiB binary upload/download, and unload.
+80×25 text capture, BIOS-key `VER`, continued UDP service while the fixture
+suppresses `INT 1Ch`, exact patterned 64 KiB VGA mode 13h capture, 2.5 KiB
+binary upload/download, and unload.
 
 `TSRHOST.EXE` keeps deterministic guest timer progress under DOSBox-X's
 headless command-shell behavior. It is a test program, not a shipped remote
