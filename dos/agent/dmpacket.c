@@ -4,9 +4,11 @@
 #include <i86.h>
 #include <string.h>
 
-static dm_u8 packet_interrupt;
-static dm_u16 ip_handle;
-static dm_u16 arp_handle;
+#define DM_PACKET_INVALID_HANDLE 0xFFFF
+
+dm_u8 dm_packet_interrupt;
+dm_u16 dm_packet_ip_handle = DM_PACKET_INVALID_HANDLE;
+dm_u16 dm_packet_arp_handle = DM_PACKET_INVALID_HANDLE;
 static dm_u8 hardware_address[6];
 static dm_u8 ip_type[2] = {0x08, 0x00};
 static dm_u8 arp_type[2] = {0x08, 0x06};
@@ -15,7 +17,7 @@ volatile dm_u16 dm_receive_length;
 dm_u8 dm_receive_buffer[DM_PACKET_MAX_FRAME];
 
 static int packet_access(const dm_u8 type[2], dm_u16 *handle);
-static void packet_release(dm_u16 handle);
+static int packet_release(dm_u8 interrupt_number, dm_u16 handle);
 static int packet_driver_present(dm_u8 interrupt_number);
 extern void __interrupt __far dm_packet_receiver(void);
 
@@ -25,24 +27,24 @@ int dm_packet_open(dm_u8 interrupt_number)
 
     if (!packet_driver_present(interrupt_number))
         return -1;
-    packet_interrupt = interrupt_number;
+    dm_packet_interrupt = interrupt_number;
     dm_receive_ready = 0;
-    ip_handle = 0;
-    arp_handle = 0;
-    if (packet_access(ip_type, &ip_handle) != 0)
+    dm_packet_ip_handle = DM_PACKET_INVALID_HANDLE;
+    dm_packet_arp_handle = DM_PACKET_INVALID_HANDLE;
+    if (packet_access(ip_type, &dm_packet_ip_handle) != 0)
         return -2;
-    if (packet_access(arp_type, &arp_handle) != 0) {
-        packet_release(ip_handle);
-        ip_handle = 0;
+    if (packet_access(arp_type, &dm_packet_arp_handle) != 0) {
+        packet_release(dm_packet_interrupt, dm_packet_ip_handle);
+        dm_packet_ip_handle = DM_PACKET_INVALID_HANDLE;
         return -3;
     }
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = 0x0600;
-    registers.w.bx = ip_handle;
+    registers.w.bx = dm_packet_ip_handle;
     registers.w.cx = sizeof(hardware_address);
     registers.w.es = _FP_SEG(hardware_address);
     registers.w.di = _FP_OFF(hardware_address);
-    intr(packet_interrupt, &registers);
+    intr(dm_packet_interrupt, &registers);
     if (registers.w.flags & INTR_CF) {
         dm_packet_close();
         return -4;
@@ -52,12 +54,13 @@ int dm_packet_open(dm_u8 interrupt_number)
 
 void dm_packet_close(void)
 {
-    if (arp_handle)
-        packet_release(arp_handle);
-    if (ip_handle)
-        packet_release(ip_handle);
-    arp_handle = 0;
-    ip_handle = 0;
+    dm_packet_release_handles(
+        dm_packet_interrupt,
+        dm_packet_ip_handle,
+        dm_packet_arp_handle
+    );
+    dm_packet_arp_handle = DM_PACKET_INVALID_HANDLE;
+    dm_packet_ip_handle = DM_PACKET_INVALID_HANDLE;
     dm_receive_ready = 0;
 }
 
@@ -65,14 +68,15 @@ int dm_packet_send(const dm_u8 *frame, dm_u16 length)
 {
     union REGPACK registers;
 
-    if (!ip_handle || length < 14 || length > DM_PACKET_MAX_FRAME)
+    if (dm_packet_ip_handle == DM_PACKET_INVALID_HANDLE
+        || length < 14 || length > DM_PACKET_MAX_FRAME)
         return -1;
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = 0x0400;
     registers.w.cx = length;
     registers.w.ds = _FP_SEG(frame);
     registers.w.si = _FP_OFF(frame);
-    intr(packet_interrupt, &registers);
+    intr(dm_packet_interrupt, &registers);
     return (registers.w.flags & INTR_CF) ? -2 : 0;
 }
 
@@ -107,21 +111,39 @@ static int packet_access(const dm_u8 type[2], dm_u16 *handle)
     registers.w.si = _FP_OFF(type);
     registers.w.es = _FP_SEG(dm_packet_receiver);
     registers.w.di = _FP_OFF(dm_packet_receiver);
-    intr(packet_interrupt, &registers);
+    intr(dm_packet_interrupt, &registers);
     if (registers.w.flags & INTR_CF)
         return -1;
     *handle = registers.w.ax;
     return 0;
 }
 
-static void packet_release(dm_u16 handle)
+static int packet_release(dm_u8 interrupt_number, dm_u16 handle)
 {
     union REGPACK registers;
 
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = 0x0300;
     registers.w.bx = handle;
-    intr(packet_interrupt, &registers);
+    intr(interrupt_number, &registers);
+    return (registers.w.flags & INTR_CF) ? -1 : 0;
+}
+
+int dm_packet_release_handles(
+    dm_u8 interrupt_number,
+    dm_u16 ip_handle,
+    dm_u16 arp_handle
+)
+{
+    int result = 0;
+
+    if (arp_handle != DM_PACKET_INVALID_HANDLE
+        && packet_release(interrupt_number, arp_handle) != 0)
+        result = -1;
+    if (ip_handle != DM_PACKET_INVALID_HANDLE
+        && packet_release(interrupt_number, ip_handle) != 0)
+        result = -1;
+    return result;
 }
 
 static int packet_driver_present(dm_u8 interrupt_number)

@@ -126,7 +126,7 @@ STARTTSR Unique-Lab-Passphrase
 
 The example IP addresses in `bin/MTCP.CFG` are documentation-only TEST-NET
 addresses and must be replaced. `STARTTSR` sets `MTCPCFG` and uses its
-`IPADDR` and `PACKETINT` values.
+`IPADDR`, `PACKETINT`, and `HOSTNAME` values.
 
 Build with Open Watcom 2:
 
@@ -152,6 +152,12 @@ Both DOS endpoints can instead share an mTCP configuration:
 SET MTCPCFG=C:\MTCP.CFG
 RAGENT pass:UniqueLabPass - 21300 -
 ```
+
+With `MTCPCFG` set, running a fresh `RA-TSR` without arguments takes its IP,
+packet-driver interrupt, and visible name from `IPADDR`, `PACKETINT`, and
+`HOSTNAME` (or DHCP's `HOSTNAME_ASSIGNED`). It installs in conspicuous open
+mode with file access disabled. The unused default file root does not need to
+exist in that mode.
 
 Resident, named, with an explicit file root:
 

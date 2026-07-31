@@ -55,10 +55,11 @@ fixture. No third-party packet driver or working site credential is bundled.
 ## mTCP configuration reuse
 
 When the DOS environment variable `MTCPCFG` names a readable mTCP
-configuration file, either endpoint can read these keys:
+configuration file, the endpoints read these keys:
 
 ```text
 PACKETINT 0x60
+HOSTNAME WORKBENCH-286
 IPADDR 192.168.10.55
 ```
 
@@ -70,13 +71,17 @@ SET MTCPCFG=C:\MTCP.CFG
 
 Precedence is per field: an explicit command-line value wins, otherwise the
 value in `MTCPCFG` wins, otherwise the built-in default is used. A `-` in the
-IP, port, or packet-interrupt position means “no command-line override.” The
-port is not an mTCP setting and remains 21300 unless explicitly changed.
+IP, port, packet-interrupt, or RA-TSR name position means “no command-line
+override.” For the name, `HOSTNAME` wins over DHCP's `HOSTNAME_ASSIGNED`, then
+the endpoint falls back to `DOS-PC`. The port is not an mTCP setting and
+remains 21300 unless explicitly changed.
 
 If `MTCPCFG` is set and a non-overridden `IPADDR` or `PACKETINT` is missing,
 invalid, unreadable, or on a line longer than 255 bytes, startup fails with a
-visible diagnostic. Unknown mTCP keys and comments are ignored. When both IP
-and packet interrupt are explicit, the file is not read.
+visible diagnostic. Unknown mTCP keys and comments are ignored. Recognized
+values are the first whitespace-delimited token, matching mTCP's line-oriented
+configuration style. RA-TSR still reads the file for its hostname when IP and
+packet interrupt are explicit but the name is not.
 
 Examples:
 
@@ -84,6 +89,18 @@ Examples:
 RAGENT pass:UniqueLabPass - 21300 -
 RA-TSR pass:UniqueLabPass - 21300 - C:\REMOTE RW WORKBENCH-386
 ```
+
+With a configured `MTCPCFG`, a completely argument-free first install is also
+valid:
+
+```dos
+RA-TSR
+```
+
+It uses the configured network fields and hostname, open credential mode,
+port 21300, and disabled file access. Because file access is disabled, the
+default `C:\RATSR` root is not required to exist. A root is validated only
+when `R`, `W`, or `RW` access is requested.
 
 The endpoints reuse mTCP's configuration convention, not its TCP/IP code.
 Some packet drivers may refuse a second client claiming IPv4/ARP packet types;

@@ -12,7 +12,7 @@ obtain the correct packet driver for the Ethernet adapter separately.
 | `RAGENT.EXE` | foreground diagnostic/alternative endpoint |
 | `PROTOCHK.EXE` | offline protocol/crypto self-test |
 | `CFGCHK.EXE` | offline mTCP configuration-parser self-test |
-| `MTCP.CFG` | deliberately unusable TEST-NET example to edit |
+| `MTCP.CFG` | TEST-NET address and `HOSTNAME` example to edit |
 | `STARTTSR.BAT` | credentialed install using `MTCPCFG` |
 | `STOPTSR.BAT` | explicit resident unload |
 | `README.TXT` | DOS-readable condensed instructions |
@@ -57,27 +57,30 @@ NE2000 0x60 5 0x300
 ```
 
 The actual interrupt, IRQ, and I/O base must match the PC. Edit
-`C:\DOSMCP\MTCP.CFG` so `PACKETINT` matches the loaded driver and `IPADDR` is
-an unused static address on the Linux host's LAN. Also set the ordinary mTCP
+`C:\DOSMCP\MTCP.CFG` so `PACKETINT` matches the loaded driver, `IPADDR` is
+an unused static address, and `HOSTNAME` uniquely identifies the PC. Also set
+the ordinary mTCP
 `NETMASK`, `GATEWAY`, and `NAMESERVER` values so the same file remains useful
 to mTCP programs:
 
 ```text
 PACKETINT 0x60
+HOSTNAME WORKBENCH-286
 IPADDR 192.168.10.55
 NETMASK 255.255.255.0
 GATEWAY 192.168.10.1
 NAMESERVER 192.168.10.1
 ```
 
-If mTCP DHCP has already populated a configuration file with `IPADDR`, the DOS
-MCP endpoint can read that file after the DHCP program exits. RA-TSR itself
-does not run DHCP and does not rewrite the file.
+If mTCP DHCP has populated `IPADDR` and `HOSTNAME_ASSIGNED`, RA-TSR can read
+those values after the DHCP program exits. A requested `HOSTNAME` takes
+precedence over the assigned value. RA-TSR itself does not run DHCP and does
+not rewrite the file.
 
 ## Install and identify RA-TSR
 
-For each PC, edit the final `DOS-PC` argument in `STARTTSR.BAT` to a unique
-1–31 character name without spaces. Then install using a unique passphrase:
+For each PC, set `HOSTNAME` in `MTCP.CFG` to a unique 1–31 character name
+without spaces. Then install using a unique passphrase:
 
 ```dos
 CD \DOSMCP
@@ -88,11 +91,11 @@ The batch file creates `C:\DOSMCP\REMOTE`, sets the `MTCPCFG` environment
 variable, and runs the equivalent of:
 
 ```dos
-RA-TSR PASS:My-Unique-Lab-Passphrase - 21300 - C:\DOSMCP\REMOTE RW DOS-PC
+RA-TSR PASS:My-Unique-Lab-Passphrase - 21300 - C:\DOSMCP\REMOTE RW -
 ```
 
-The two `-` placeholders mean that IP address and packet-driver interrupt come
-from the mTCP file. The passphrase appears briefly in the DOS command tail; do
+The IP, packet-interrupt, and final-name `-` placeholders select their mTCP
+file values. The passphrase appears briefly in the DOS command tail; do
 not reuse an important password. The file root is locally restricted to the
 dedicated directory, while `RW` permits bridge-approved upload and download.
 Change it to `R` or `-` before installation when less access is appropriate.

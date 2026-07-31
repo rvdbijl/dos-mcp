@@ -53,22 +53,35 @@ RA-TSR [credential] [local-ip] [port] [packet-int] [root] [access] [name]
 | local IP | `10.0.2.15` | static IPv4 address; RA-TSR has no DHCP client |
 | port | `21300` | authenticated operation port |
 | packet interrupt | `0x60` | FTP/Crynwr packet-driver software interrupt |
-| root | `C:\RATSR` | existing directory used for all file operations |
+| root | `C:\RATSR` | must exist only when file access is enabled |
 | access | `-` | `-`, `R`, `W`, or `RW` |
 | name | `DOS-PC` | 1–31 visible ASCII bytes without spaces |
 
-When `MTCPCFG` is set, use `-` for local IP and packet interrupt to read
-`IPADDR` and `PACKETINT` from the shared mTCP file:
+When `MTCPCFG` is set, use `-` for local IP, packet interrupt, and optionally
+name to read `IPADDR`, `PACKETINT`, and `HOSTNAME` from the shared mTCP file:
 
 ```dos
 SET MTCPCFG=C:\MTCP.CFG
-RA-TSR pass:UniqueMachinePass - 21300 - C:\REMOTE RW WORKBENCH-386
+RA-TSR pass:UniqueMachinePass - 21300 - C:\REMOTE RW -
 ```
 
 An explicit positional IP or interrupt overrides its corresponding file key.
+An explicit name overrides `HOSTNAME`; DHCP's `HOSTNAME_ASSIGNED` is the name
+fallback when `HOSTNAME` is absent.
 See [Configuration reference](configuration.md) for strict parsing and failure
 behavior, or [Hardware commissioning](hardware-commissioning.md) for the
 copy-ready bundle workflow.
+
+A fresh argument-free install is supported when the packet driver is loaded:
+
+```dos
+SET MTCPCFG=C:\MTCP.CFG
+RA-TSR
+```
+
+This selects the configured network identity, port 21300, open credential
+mode, and no file access. Since file access is off, a missing default
+`C:\RATSR` directory does not block installation.
 
 The name is an operator label, not authentication. If names collide, the
 Linux bridge exposes selectors such as `WORKBENCH@acde48444d02`.
@@ -87,8 +100,9 @@ If another TSR was installed above it, RA-TSR refuses to free memory because
 doing so would leave the newer program with dangling chains. It also refuses
 while a file or graphics transfer is active. After the transfer completes or
 idle-session cleanup aborts it, unload disables new work, releases
-packet-driver handles, restores the saved vectors, and frees the resident PSP
-block.
+packet-driver handles from normal process context, restores the saved vectors,
+and frees the resident PSP block. DOSBox-X verifies an immediate reload after
+unload, including a driver that returns valid packet handle zero.
 
 ## Resident execution model
 

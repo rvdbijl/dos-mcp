@@ -147,8 +147,10 @@ tools/test_dosbox_x_tsr.sh
 The resident harness:
 
 1. runs `PROTOCHK.EXE` and `CFGCHK.EXE` under DOS;
-2. sets `MTCPCFG`, then loads RA-TSR with IP and packet interrupt taken from
-   that file plus a password, file root, and `RW` policy;
+2. sets `MTCPCFG`, performs a no-argument load/name/unload regression, verifies
+   packet-handle release by immediately reloading, then uses IP, packet
+   interrupt, and hostname from that file plus a password, file root, and
+   `RW` policy;
 3. keeps deterministic timer progress and issues DOS-idle interrupts in the
    test-only `TSRHOST.EXE`;
 4. verifies status, capabilities, empty keys, and 32/256-byte packets;

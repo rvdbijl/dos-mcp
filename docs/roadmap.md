@@ -11,7 +11,7 @@
 - [x] 8086 assembly receive upcall, ARP/IPv4/UDP, retries, replay handling.
 - [x] Optional passphrase, raw 128-bit key, and conspicuous open mode.
 - [x] Cross-language protocol vectors and foreground DOSBox-X test.
-- [x] Bounded mTCP `MTCPCFG` reuse for `IPADDR` and `PACKETINT`.
+- [x] Bounded mTCP `MTCPCFG` reuse for `IPADDR`, `PACKETINT`, and hostname.
 - [x] Tracked hardware commissioning bundle and offline DOS self-tests.
 
 ### Protocol v2 and resident RA-TSR

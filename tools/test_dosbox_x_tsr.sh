@@ -28,8 +28,9 @@ if [[ ! -f "$build_dir/NE2000.COM" ]]; then
     echo "Set PACKET_DRIVER to a Crynwr-compatible NE2000.COM." >&2
     exit 2
 fi
-rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/TSR.LOG" \
-    "$build_dir/QUERY.LOG" "$build_dir/UNLOAD.LOG"
+rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/ZERO.LOG" \
+    "$build_dir/ZERO-U.LOG" "$build_dir/TSR.LOG" "$build_dir/QUERY.LOG" \
+    "$build_dir/UNLOAD.LOG"
 rm -rf -- "$build_dir/REMOTE"
 
 (
@@ -64,3 +65,6 @@ grep -q "RA-TSR unloaded" "$build_dir/UNLOAD.LOG"
 grep -q "PASS protocol vectors" "$build_dir/PROTO.LOG"
 grep -q "PASS mTCP configuration vectors" "$build_dir/CFG.LOG"
 grep -Fq 'using MTCPCFG C:\MTCP.CFG' "$build_dir/TSR.LOG"
+grep -Fq '"DOSBOX-TSR" installed at 10.0.2.15:21300' \
+    "$build_dir/ZERO.LOG"
+grep -q "RA-TSR unloaded" "$build_dir/ZERO-U.LOG"

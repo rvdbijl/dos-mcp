@@ -1,5 +1,6 @@
 #include "dmconfig.h"
 #include "dmnet.h"
+#include "dmpacket.h"
 #include "dmproto.h"
 
 #include <bios.h>
@@ -166,6 +167,8 @@ static int configure_network(
     dm_u8 ip[4],
     dm_u16 *port,
     dm_u8 *packet_interrupt,
+    char *mtcp_hostname,
+    dm_u8 use_mtcp_hostname,
     const char *program
 );
 static int parse_raw_key(const char *text, dm_u8 output[16]);
@@ -218,7 +221,7 @@ static dm_u32 read_bios_ticks(void);
 static dm_u8 detect_adapter(dm_u8 video_mode);
 #ifdef RA_TSR
 static int uninstall_tsr(void);
-static int configure_tsr(int argc, char **argv);
+static int configure_tsr(int argc, char **argv, const char *mtcp_hostname);
 static void keep_resident(void);
 static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length);
 static int safe_relative_path(const char *path);
@@ -281,7 +284,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (configure_network(
-        argc, argv, ip, &port, &packet_interrupt, "RAGENT"
+        argc, argv, ip, &port, &packet_interrupt, 0, 0, "RAGENT"
     ) != 0) {
         return 4;
     }
@@ -317,6 +320,7 @@ int main(int argc, char **argv)
     dm_u8 ip[4] = {10, 0, 2, 15};
     dm_u16 port = AGENT_PORT;
     dm_u8 packet_interrupt = 0x60;
+    char mtcp_hostname[DM_MTCP_HOSTNAME_MAX + 1];
     dm_u8 open_mode;
     union REGS input;
     union REGS output;
@@ -350,11 +354,13 @@ int main(int argc, char **argv)
         puts("RA-TSR: invalid or empty credential");
         return 3;
     }
+    mtcp_hostname[0] = 0;
     if (configure_network(
-        argc, argv, ip, &port, &packet_interrupt, "RA-TSR"
+        argc, argv, ip, &port, &packet_interrupt,
+        mtcp_hostname, argc < 8 || strcmp(argv[7], "-") == 0, "RA-TSR"
     ) != 0)
         return 5;
-    if (configure_tsr(argc, argv) != 0) {
+    if (configure_tsr(argc, argv, mtcp_hostname) != 0) {
         puts("RA-TSR: invalid sandbox root, access mode, or name");
         return 5;
     }
@@ -464,6 +470,8 @@ static int configure_network(
     dm_u8 ip[4],
     dm_u16 *port,
     dm_u8 *packet_interrupt,
+    char *mtcp_hostname,
+    dm_u8 use_mtcp_hostname,
     const char *program
 )
 {
@@ -471,12 +479,18 @@ static int configure_network(
     int explicit_ip = argc >= 3 && strcmp(argv[2], "-") != 0;
     int explicit_interrupt = argc >= 5 && strcmp(argv[4], "-") != 0;
 
-    if (config_path && *config_path && (!explicit_ip || !explicit_interrupt)) {
+    if (config_path && *config_path
+        && (!explicit_ip || !explicit_interrupt || use_mtcp_hostname)) {
         dm_u8 configured_ip[4];
         dm_u8 configured_interrupt = 0;
+        char configured_hostname[DM_MTCP_HOSTNAME_MAX + 1];
         dm_u8 found = 0;
-        int result = dm_mtcp_config_load(
-            config_path, configured_ip, &configured_interrupt, &found
+        int result;
+
+        configured_hostname[0] = 0;
+        result = dm_mtcp_config_load(
+            config_path, configured_ip, &configured_interrupt,
+            configured_hostname, sizeof(configured_hostname), &found
         );
 
         if (result != DM_MTCP_OK) {
@@ -498,6 +512,8 @@ static int configure_network(
             }
             *packet_interrupt = configured_interrupt;
         }
+        if (use_mtcp_hostname && (found & DM_MTCP_HAVE_HOSTNAME))
+            strcpy(mtcp_hostname, configured_hostname);
         printf("%s: using MTCPCFG %s\n", program, config_path);
     }
     if (explicit_ip && parse_ip(argv[2], ip) != 0) {
@@ -1453,7 +1469,6 @@ void ratsr_idle_worker(dm_u16 dos_idle)
 void ratsr_prepare_unload(void)
 {
     ratsr_enabled = 0;
-    dm_net_close();
 }
 
 static int uninstall_tsr(void)
@@ -1469,6 +1484,9 @@ static int uninstall_tsr(void)
     dm_u16 old28_segment;
     dm_u16 old2f_offset;
     dm_u16 old2f_segment;
+    dm_u16 packet_ip_handle;
+    dm_u16 packet_arp_handle;
+    dm_u8 packet_driver_interrupt;
 
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = TSR_MULTIPLEX;
@@ -1503,6 +1521,17 @@ static int uninstall_tsr(void)
     old28_segment = registers.w.di;
     memset(&registers, 0, sizeof(registers));
     registers.w.ax = TSR_MULTIPLEX;
+    registers.w.bx = 4;
+    intr(0x2F, &registers);
+    if (registers.w.ax != TSR_REPLY) {
+        puts("RA-TSR: cannot read resident packet-driver state");
+        return 3;
+    }
+    packet_ip_handle = registers.w.bx;
+    packet_arp_handle = registers.w.cx;
+    packet_driver_interrupt = registers.h.dl;
+    memset(&registers, 0, sizeof(registers));
+    registers.w.ax = TSR_MULTIPLEX;
     registers.w.bx = 1;
     intr(0x2F, &registers);
     if (registers.w.ax != TSR_REPLY) {
@@ -1516,6 +1545,12 @@ static int uninstall_tsr(void)
     old1c_segment = registers.w.dx;
     old2f_offset = registers.w.si;
     old2f_segment = registers.w.di;
+    if (dm_packet_release_handles(
+        packet_driver_interrupt, packet_ip_handle, packet_arp_handle
+    ) != 0) {
+        puts("RA-TSR: packet driver refused endpoint release; reboot required");
+        return 3;
+    }
     _dos_setvect(
         0x1C,
         (void (__interrupt __far *)(void))MK_FP(old1c_segment, old1c_offset)
@@ -1562,12 +1597,14 @@ static void send_discovery(void)
     dm_net_broadcast(DISCOVERY_PORT, payload, length + 2);
 }
 
-static int configure_tsr(int argc, char **argv)
+static int configure_tsr(int argc, char **argv, const char *mtcp_hostname)
 {
     char current[TSR_PATH_MAX + 1];
     const char *root = argc >= 6 ? argv[5] : "C:\\RATSR";
     const char *access = argc >= 7 ? argv[6] : "-";
-    const char *name = argc >= 8 ? argv[7] : "DOS-PC";
+    const char *name = argc >= 8 && strcmp(argv[7], "-") != 0
+        ? argv[7]
+        : (*mtcp_hostname ? mtcp_hostname : "DOS-PC");
     size_t length = strlen(root);
     size_t name_length = strlen(name);
     size_t index;
@@ -1588,12 +1625,13 @@ static int configure_tsr(int argc, char **argv)
         && (sandbox_root[length - 1] == '\\'
             || sandbox_root[length - 1] == '/'))
         sandbox_root[--length] = 0;
-    if (chdir(sandbox_root) != 0 || chdir(current) != 0)
-        return -1;
     allow_file_read = strchr(access, 'R') != 0 || strchr(access, 'r') != 0;
     allow_file_write = strchr(access, 'W') != 0 || strchr(access, 'w') != 0;
     if (strcmp(access, "-") != 0
         && !allow_file_read && !allow_file_write)
+        return -1;
+    if ((allow_file_read || allow_file_write)
+        && (chdir(sandbox_root) != 0 || chdir(current) != 0))
         return -1;
     return 0;
 }

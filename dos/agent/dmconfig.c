@@ -25,10 +25,9 @@ static char *skip_space(char *value)
     return value;
 }
 
-static int finish_value(char *value)
+static int finish_token(char *value)
 {
-    value = skip_space(value);
-    return *value == 0 || *value == '#';
+    return *value == 0 || isspace((unsigned char)*value) || *value == '#';
 }
 
 static int parse_ip_value(char *value, dm_u8 output[4])
@@ -50,7 +49,7 @@ static int parse_ip_value(char *value, dm_u8 output[4])
             ++value;
         }
     }
-    if (!finish_value(value))
+    if (!finish_token(value))
         return -1;
     for (index = 0; index < 4; ++index)
         output[index] = (dm_u8)parts[index];
@@ -65,9 +64,27 @@ static int parse_interrupt_value(char *value, dm_u8 *output)
     if (!*value || *value == '-')
         return -1;
     number = strtoul(value, &end, 0);
-    if (end == value || number == 0 || number > 255 || !finish_value(end))
+    if (end == value || number == 0 || number > 255 || !finish_token(end))
         return -1;
     *output = (dm_u8)number;
+    return 0;
+}
+
+static int parse_hostname_value(char *value, char *output)
+{
+    dm_u16 length = 0;
+
+    while (*value && !isspace((unsigned char)*value) && *value != '#') {
+        unsigned char character = (unsigned char)*value;
+
+        if (character < 33 || character > 126
+            || length >= DM_MTCP_HOSTNAME_MAX)
+            return -1;
+        output[length++] = *value++;
+    }
+    if (!length || !finish_token(value))
+        return -1;
+    output[length] = 0;
     return 0;
 }
 
@@ -75,6 +92,8 @@ int dm_mtcp_config_load(
     const char *path,
     dm_u8 ip[4],
     dm_u8 *packet_interrupt,
+    char *hostname,
+    dm_u16 hostname_capacity,
     dm_u8 *found
 )
 {
@@ -82,10 +101,15 @@ int dm_mtcp_config_load(
     char line[DM_MTCP_LINE_SIZE];
     dm_u8 parsed_ip[4];
     dm_u8 parsed_interrupt = 0;
+    char parsed_hostname[DM_MTCP_HOSTNAME_MAX + 1];
+    char assigned_hostname[DM_MTCP_HOSTNAME_MAX + 1];
     dm_u8 parsed_found = 0;
     int result = DM_MTCP_OK;
 
-    if (!path || !*path || !ip || !packet_interrupt || !found)
+    parsed_hostname[0] = 0;
+    assigned_hostname[0] = 0;
+    if (!path || !*path || !ip || !packet_interrupt || !hostname
+        || hostname_capacity < DM_MTCP_HOSTNAME_MAX + 1 || !found)
         return DM_MTCP_ERR_ARGUMENT;
     stream = fopen(path, "rt");
     if (!stream)
@@ -133,6 +157,17 @@ int dm_mtcp_config_load(
                 break;
             }
             parsed_found |= DM_MTCP_HAVE_PACKET_INT;
+        } else if (key_equal(key, "HOSTNAME")) {
+            if (parse_hostname_value(cursor, parsed_hostname) != 0) {
+                result = DM_MTCP_ERR_HOSTNAME;
+                break;
+            }
+            parsed_found |= DM_MTCP_HAVE_HOSTNAME;
+        } else if (key_equal(key, "HOSTNAME_ASSIGNED")) {
+            if (parse_hostname_value(cursor, assigned_hostname) != 0) {
+                result = DM_MTCP_ERR_HOSTNAME;
+                break;
+            }
         }
     }
     if (ferror(stream) && result == DM_MTCP_OK)
@@ -144,6 +179,12 @@ int dm_mtcp_config_load(
         memcpy(ip, parsed_ip, sizeof(parsed_ip));
     if (parsed_found & DM_MTCP_HAVE_PACKET_INT)
         *packet_interrupt = parsed_interrupt;
+    if (parsed_found & DM_MTCP_HAVE_HOSTNAME)
+        strcpy(hostname, parsed_hostname);
+    else if (*assigned_hostname) {
+        strcpy(hostname, assigned_hostname);
+        parsed_found |= DM_MTCP_HAVE_HOSTNAME;
+    }
     *found = parsed_found;
     return DM_MTCP_OK;
 }
@@ -163,6 +204,8 @@ const char *dm_mtcp_config_error(int result)
         return "invalid IPADDR";
     case DM_MTCP_ERR_PACKETINT:
         return "invalid PACKETINT";
+    case DM_MTCP_ERR_HOSTNAME:
+        return "invalid HOSTNAME";
     default:
         return "unknown configuration error";
     }

@@ -24,6 +24,9 @@ _DATA   SEGMENT WORD PUBLIC 'DATA'
         EXTRN   _ratsr_last_send_result:WORD
         EXTRN   _dm_receive_ready:BYTE
         EXTRN   _dm_receive_length:WORD
+        EXTRN   _dm_packet_interrupt:BYTE
+        EXTRN   _dm_packet_ip_handle:WORD
+        EXTRN   _dm_packet_arp_handle:WORD
         EXTRN   _transfer_kind:BYTE
 _DATA   ENDS
 
@@ -225,6 +228,8 @@ ratsr_multiplex_handler_ PROC FAR
         je      multiplex_ticks
         cmp     bx,3
         je      multiplex_int28
+        cmp     bx,4
+        je      multiplex_packet
         xor     ax,ax
         iret
 
@@ -287,6 +292,18 @@ multiplex_int28:
         mov     ax,05A5Ah
         mov     cx,offset ratsr_dos_idle_handler_
         mov     dx,cs
+        iret
+
+multiplex_packet:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        mov     bx,word ptr [_dm_packet_ip_handle]
+        mov     cx,word ptr [_dm_packet_arp_handle]
+        xor     dx,dx
+        mov     dl,byte ptr [_dm_packet_interrupt]
+        pop     ds
+        mov     ax,05A5Ah
         iret
 
 multiplex_chain:

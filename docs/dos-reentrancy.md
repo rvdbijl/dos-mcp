@@ -58,10 +58,12 @@ transfers exercise this path.
 
 ### Multiplex and unload entry
 
-`INT 2Fh AX=D05Ah` supports query, unload preparation, and diagnostic state.
-Unload preparation stops work and releases packet resources. The transient
-unloader verifies that current `INT 1Ch`, `INT 28h`, and `INT 2Fh` vectors
-still point to RA-TSR before restoring old vectors and freeing the PSP block.
+`INT 2Fh AX=D05Ah` supports query, unload preparation, packet-handle query,
+and diagnostic state. Unload preparation stops resident work. After the
+interrupt returns, the transient unloader releases both packet-driver handles
+from ordinary process context, then restores the verified `INT 1Ch`, `INT 28h`,
+and `INT 2Fh` vectors and frees the PSP block. Packet handle zero is valid and
+is distinct from the internal `FFFFh` invalid sentinel.
 It refuses while a transfer owns a DOS handle, avoiding DOS close/remove
 calls from the multiplex interrupt.
 

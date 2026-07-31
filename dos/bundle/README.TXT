@@ -8,7 +8,7 @@ Before loading RA-TSR:
 1. Load the packet driver for the Ethernet adapter.
 2. Edit MTCP.CFG. Set PACKETINT to the packet driver's software interrupt.
 3. Set IPADDR, NETMASK, GATEWAY, and NAMESERVER for the local network.
-4. Edit STARTTSR.BAT to give this PC a unique visible name if desired.
+4. Set HOSTNAME to a unique visible name for this PC.
 5. Run STARTTSR with a unique passphrase, for example:
 
      C:\DOSMCP> STARTTSR Correct-Horse-Battery-Staple

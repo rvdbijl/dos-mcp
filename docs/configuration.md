@@ -112,11 +112,13 @@ SET MTCPCFG=C:\MTCP.CFG
 ```
 
 `MTCPCFG` must contain a full readable path. The DOS endpoints recognize
-`IPADDR` and `PACKETINT`, case-insensitively, while ignoring blank lines,
-`#` comments, and other mTCP keys:
+`IPADDR`, `PACKETINT`, `HOSTNAME`, and `HOSTNAME_ASSIGNED`,
+case-insensitively, while ignoring blank lines, `#` comments, and other mTCP
+keys:
 
 ```text
 PACKETINT 0x60
+HOSTNAME WORKBENCH-286
 IPADDR 192.168.10.55
 NETMASK 255.255.255.0
 GATEWAY 192.168.10.1
@@ -125,14 +127,19 @@ NAMESERVER 192.168.10.1
 
 The last valid occurrence of a recognized key wins. IPv4 octets must be
 decimal 0–255; `PACKETINT` accepts decimal or C-style hexadecimal from 1 to
-255. A recognized malformed value or an overlong line rejects the whole file
-without partially changing the endpoint configuration.
+255. Values end at whitespace, so additional annotation after a valid value
+does not make the address invalid. A recognized malformed value or an overlong
+line rejects the whole file without partially changing endpoint configuration.
 
 Precedence is evaluated separately for IP and packet interrupt:
 
 1. explicit positional argument;
 2. the matching `MTCPCFG` key;
 3. built-in default (`10.0.2.15` or `0x60`).
+
+RA-TSR name precedence is explicit name, `HOSTNAME`,
+`HOSTNAME_ASSIGNED`, then `DOS-PC`. Use `-` in the final name position to
+request the configuration-file name explicitly.
 
 Use `-` to leave the IP, port, or packet-interrupt positional argument
 unmodified. For example:
@@ -146,6 +153,11 @@ If `MTCPCFG` is set and either non-overridden required key is missing or the
 file cannot be read, startup fails rather than silently mixing an unintended
 address. If both IP and packet interrupt are explicit, `MTCPCFG` is not read.
 The UDP port is DOS MCP-specific and is never obtained from the mTCP file.
+
+When a fresh RA-TSR is run with no arguments and `MTCPCFG` is set, it uses the
+file's `IPADDR`, `PACKETINT`, and hostname. Other defaults remain: port 21300,
+open credential mode, and disabled file access. `C:\RATSR` need not exist while
+file access is disabled; an enabled `R`, `W`, or `RW` root must exist.
 
 This behavior follows the mTCP configuration-file convention documented in
 the [mTCP user documentation](https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/net/mtcp/2025-01-10/mTCP_2025-01-10.pdf).
@@ -166,8 +178,8 @@ RA-TSR [credential] [local-ip] [port] [packet-int] [root] [access] [name]
 | file access | `-` |
 | discovery name | `DOS-PC` |
 
-The local-IP and packet-interrupt defaults apply only when no explicit value
-or active `MTCPCFG` value supplies that field.
+The local-IP, packet-interrupt, and name defaults apply only when no explicit
+value or active `MTCPCFG` value supplies that field.
 
 Access values are `-`, `R`, `W`, and `RW`. Name is 1–31 visible ASCII bytes
 without spaces. Discovery sends to UDP 21301 at build-time default.

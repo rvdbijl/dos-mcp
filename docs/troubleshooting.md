@@ -71,8 +71,11 @@ Confirm that:
 - no other DOS network stack exclusively owns those types.
 
 If `MTCPCFG` is set, confirm it names a readable full path and contains valid
-`IPADDR` and `PACKETINT` lines. Startup reports configuration failures before
-it contacts the packet driver. Sharing that file with mTCP does not guarantee
+`IPADDR` and `PACKETINT` lines. `HOSTNAME` is optional and supplies RA-TSR's
+visible name; `HOSTNAME_ASSIGNED` is its DHCP fallback. Recognized values end
+at whitespace, so ordinary trailing annotations are ignored. Startup reports
+configuration failures before it contacts the packet driver. Sharing that
+file with mTCP does not guarantee
 that the driver permits a running mTCP utility and DOS MCP endpoint to claim
 the same packet types at once; exit the foreground utility and retry.
 
@@ -89,6 +92,10 @@ The equivalent mTCP-configured invocation is:
 SET MTCPCFG=C:\MTCP.CFG
 RAGENT pass:<password> - 21300 -
 ```
+
+For a fresh no-argument RA-TSR install, the default root does not need to exist
+because file access defaults off. A requested `R`, `W`, or `RW` root still
+must exist.
 
 Different hardware needs its own driver arguments.
 
