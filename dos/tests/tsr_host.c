@@ -26,6 +26,7 @@ int main(void)
     unsigned length = 0;
     int graphics_mode = 0;
     int issue_dos_idle = 1;
+    int force_invalid_cursor = 0;
 
     puts("RA-TSR integration host");
     fputs("TSRHOST> ", stdout);
@@ -69,6 +70,10 @@ int main(void)
                 issue_dos_idle = 0;
             } else if (stricmp(command, "YES28") == 0) {
                 issue_dos_idle = 1;
+            } else if (stricmp(command, "BADC") == 0) {
+                force_invalid_cursor = 1;
+            } else if (stricmp(command, "GOODC") == 0) {
+                force_invalid_cursor = 0;
             } else if (stricmp(command, "GFX13") == 0) {
                 union REGS input;
                 union REGS output;
@@ -95,6 +100,15 @@ int main(void)
             if (!graphics_mode) {
                 fputs("TSRHOST> ", stdout);
                 fflush(stdout);
+                if (force_invalid_cursor) {
+                    volatile unsigned char __far *active_page =
+                        (volatile unsigned char __far *)MK_FP(0x40, 0x62);
+                    volatile unsigned short __far *cursor_positions =
+                        (volatile unsigned short __far *)MK_FP(0x40, 0x50);
+                    unsigned page = *active_page <= 7 ? *active_page : 0;
+
+                    cursor_positions[page] = 0x1900;
+                }
             }
         } else if (ascii == 8) {
             if (length) {

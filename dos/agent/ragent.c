@@ -1183,6 +1183,32 @@ static dm_u8 owns_vector(
 }
 #endif
 
+static void store_cursor_metadata(
+    dm_u8 *output,
+    dm_u16 cursor,
+    dm_u16 shape,
+    dm_u8 columns,
+    dm_u8 rows
+)
+{
+    dm_u8 row = (dm_u8)(cursor >> 8);
+    dm_u8 column = (dm_u8)cursor;
+    dm_u8 start = (dm_u8)(shape >> 8);
+    dm_u8 end = (dm_u8)shape;
+
+    /* Some programs hide the cursor with an off-screen BDA position. */
+    if (row >= rows || column >= columns) {
+        row = 0;
+        column = 0;
+        start = 1;
+        end = 0;
+    }
+    output[4] = row;
+    output[5] = column;
+    output[6] = start;
+    output[7] = end;
+}
+
 #ifndef RA_TSR
 static dm_u16 capture_screen(dm_u8 *output)
 {
@@ -1213,10 +1239,7 @@ static dm_u16 capture_screen(dm_u8 *output)
     output[1] = rows;
     output[2] = *video_mode;
     output[3] = *active_page;
-    output[4] = (dm_u8)(cursor >> 8);
-    output[5] = (dm_u8)cursor;
-    output[6] = (dm_u8)(*cursor_shape >> 8);
-    output[7] = (dm_u8)*cursor_shape;
+    store_cursor_metadata(output, cursor, *cursor_shape, cols, rows);
     output[8] =
 #ifdef RA_TSR
         cached_adapter;
@@ -1262,10 +1285,13 @@ static dm_u16 prepare_text_capture(void)
     text_capture_header[1] = 25;
     text_capture_header[2] = *video_mode;
     text_capture_header[3] = page;
-    text_capture_header[4] = (dm_u8)(cursor >> 8);
-    text_capture_header[5] = (dm_u8)cursor;
-    text_capture_header[6] = (dm_u8)(*cursor_shape >> 8);
-    text_capture_header[7] = (dm_u8)*cursor_shape;
+    store_cursor_metadata(
+        text_capture_header,
+        cursor,
+        *cursor_shape,
+        cols,
+        25
+    );
     text_capture_header[8] = cached_adapter;
     dm_put_u16(text_capture_header + 9, 437);
     dm_put_u16(text_capture_header + 11, ++generation);

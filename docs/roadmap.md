@@ -52,7 +52,8 @@ PicoMEM/PicoMEM2 code remains intentionally unimplemented.
 - [ ] Measure load size, resident paragraphs, and private-stack high water.
 - [ ] Measure handshake, MAC, 256-byte fragment, and graphics-block timing on a
   genuine 4.77 MHz 8088.
-- [ ] Test DOS 3.x, 5.x, 6.x, FreeDOS, 286, 386, and 486 machines.
+- [ ] Extend the physical matrix beyond the verified MS-DOS 6.22/286 system
+  to DOS 3.x, DOS 5.x, FreeDOS, 386, and 486 machines.
 - [ ] Test representative Crynwr packet drivers/adapters under loss/load.
 - [ ] Catalogue packet-driver behavior when an mTCP utility and endpoint
   request overlapping IPv4/ARP packet types.

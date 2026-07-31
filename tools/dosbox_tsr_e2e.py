@@ -103,6 +103,12 @@ def main() -> None:
         if not any("DOS version" in row for row in after.text):
             raise AssertionError("VER output was not captured through the TSR")
 
+        type_all(backend, "BADC", enter=True)
+        hidden_cursor = backend.capture_screen().cursor
+        if hidden_cursor.visible or hidden_cursor.row or hidden_cursor.column:
+            raise AssertionError("off-screen DOS cursor was not normalized")
+        type_all(backend, "GOODC", enter=True)
+
         type_all(backend, "CUT1C", enter=True)
         cut_before = backend.get_resident_diagnostics()
         time.sleep(0.25)

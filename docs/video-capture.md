@@ -20,7 +20,9 @@ timer worker. Mode 7 maps to `B000h`; other standard text modes map to
 
 The current DOS representation is bounded to at most 80×25. Cursor and active
 page values are validated by the Python message/domain model before MCP
-results are returned.
+results are returned. Programs such as CheckIt may hide the hardware cursor by
+placing its BDA position just below the screen. The DOS endpoint normalizes
+that convention to an invisible in-bounds cursor at `(0,0)` before sending it.
 
 ## Raw graphics result
 

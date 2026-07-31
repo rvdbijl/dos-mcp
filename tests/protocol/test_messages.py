@@ -113,6 +113,28 @@ def test_screen_rejects_wrong_cell_count() -> None:
         ).encode()
 
 
+@pytest.mark.parametrize(("cursor_row", "cursor_column"), [(2, 0), (0, 2)])
+def test_screen_rejects_cursor_outside_grid(
+    cursor_row: int,
+    cursor_column: int,
+) -> None:
+    with pytest.raises(ValueError, match="cursor is outside screen"):
+        ScreenMessage(
+            columns=2,
+            rows=2,
+            video_mode=3,
+            active_page=0,
+            cursor_row=cursor_row,
+            cursor_column=cursor_column,
+            cursor_start=1,
+            cursor_end=0,
+            adapter=Adapter.CGA,
+            code_page=437,
+            generation=1,
+            cells=b"\0\0" * 4,
+        ).encode()
+
+
 def test_key_request_rejects_unknown_key_code() -> None:
     encoded = KeyRequest(b"", (), 0).encode() + b"\xff"
     encoded = encoded[:2] + b"\x01" + encoded[3:]

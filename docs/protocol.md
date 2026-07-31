@@ -196,6 +196,10 @@ adapter:u8, code_page:u16, generation:u16
 ```
 
 Exactly `columns * rows * 2` interleaved character/attribute bytes follow.
+Cursor coordinates must be inside the declared grid. A DOS target that finds
+an off-screen BDA cursor position must report an invisible cursor at `(0,0)`
+by encoding `cursor_start > cursor_end`; the modern bridge continues to reject
+unbounded target coordinates.
 
 ### `SEND_KEYS`
 

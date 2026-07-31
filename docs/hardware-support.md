@@ -23,7 +23,7 @@ compatibility on a 4.77 MHz 8088.
 | DOSBox-X foreground endpoint | Implemented | Repeatable NE2000/SLiRP harness |
 | DOSBox-X resident endpoint | Implemented | Text, VGA 13h, keys, files, unload |
 | Physical 8088 packet-driver machine | Designed, not yet measured here | Requires hardware validation |
-| Resident `RA-TSR` | Implemented | Emulator verified; physical timing unverified |
+| Resident `RA-TSR` | Implemented | Emulator verified; physical 286/CheckIt graphics run verified |
 | PicoMEM/PicoMEM2 | Intentionally not implemented | Outside current scope |
 
 ## DOS and CPU
@@ -39,15 +39,30 @@ every BIOS, packet driver, or application.
 | 8086/8088 instruction set | Build target; generated code still needs independent audit |
 | DOSBox-X reported DOS 5.0 | End-to-end verified |
 | MS-DOS 3.x | Not yet verified |
-| MS-DOS 5.x/6.x on hardware | Not yet verified |
+| MS-DOS 5.x/6.x on hardware | MS-DOS 6.22 verified on one physical 286 |
 | PC DOS / DR-DOS | Not yet verified |
 | FreeDOS | Not yet verified |
-| 286/386/486 real mode | Compatible build target; not yet catalogued on hardware |
+| 286/386/486 real mode | Physical 286 verified; 386/486 not yet catalogued |
 | Windows DOS boxes / protected mode | Not supported by RA-TSR |
 
 Runtime conventional-memory use and worst-case interrupt latency have not yet
 been measured on physical hardware. The resident build deliberately retains
 128 KiB for code, data, transfer buffers, and its private stack.
+
+### Physical 286 CheckIt run
+
+On 2026-07-31, the open-mode resident build was exercised on a physical
+80286 running MS-DOS 6.22 with an EGA adapter and CheckIt 3.0. CheckIt was
+copied to and launched from `C:\UTIL\CHECKIT`. Its graphics sequence produced
+stable double captures in modes `04h`, `05h`, `0Dh`, `06h`, `0Eh`, and `10h`,
+including the 112,000-byte mode-10h planar framebuffer.
+
+CheckIt replaced `INT 1Ch` while active but chained it: the `INT 08h` and
+`INT 1Ch` entry counters remained equal and watchdog fallback stayed at zero.
+After CheckIt exited, RA-TSR again owned all four installed vectors. The final
+run showed zero send failures. It also exposed substantial receive drops and
+slow retries during large double captures, so physical-link throughput and
+retry pacing remain hardening work rather than a general timing claim.
 
 ## Ethernet and packet drivers
 
