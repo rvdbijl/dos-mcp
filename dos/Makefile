@@ -11,7 +11,7 @@ WCL_ENV = WATCOM=$(WATCOM) \
 	EDPATH=$(WATCOM)/eddat \
 	INCLUDE=$(DOS_INCLUDE)
 
-.PHONY: all clean proto-test config-test agent tsr tsr-test-host bin
+.PHONY: all clean proto-test config-test agent tsr tsr-loader tsr-core tsr-test-host bin
 
 all: proto-test config-test agent tsr tsr-test-host
 
@@ -40,10 +40,20 @@ agent: $(BUILD)/dmpacket_rx.obj | $(BUILD)
 $(BUILD)/ratsr_hooks.obj: agent/ratsr_hooks.asm | $(BUILD)
 	$(WCL_ENV) $(WASM) -q -fo=$@ $<
 
-tsr: $(BUILD)/dmpacket_rx.obj $(BUILD)/ratsr_hooks.obj | $(BUILD)
-	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx -dRA_TSR \
+tsr: tsr-loader tsr-core
+
+tsr-loader: $(BUILD)/dmpacket_rx.obj | $(BUILD)
+	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx \
 		-i=include -fe=$(BUILD)/RA-TSR.EXE \
-		agent/ragent.c agent/dmconfig.c agent/dmproto.c agent/dmpacket.c \
+		agent/ratsr_loader.c agent/dmconfig.c agent/dmproto.c \
+		agent/dmpacket.c $(BUILD)/dmpacket_rx.obj
+
+tsr-core: $(BUILD)/dmpacket_rx.obj $(BUILD)/ratsr_hooks.obj | $(BUILD)
+	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx -k2048 \
+		-dRA_TSR -dRA_TSR_CORE \
+		-fm=$(BUILD)/RA-RES.MAP \
+		-i=include -fe=$(BUILD)/RA-RES.EXE \
+		agent/ragent.c agent/dmproto.c agent/dmpacket.c \
 		$(BUILD)/dmpacket_rx.obj $(BUILD)/ratsr_hooks.obj agent/dmnet.c
 
 tsr-test-host: | $(BUILD)
@@ -52,11 +62,11 @@ tsr-test-host: | $(BUILD)
 
 bin: all
 	mkdir -p $(BIN)
-	cp $(BUILD)/RAGENT.EXE $(BUILD)/RA-TSR.EXE \
+	cp $(BUILD)/RAGENT.EXE $(BUILD)/RA-TSR.EXE $(BUILD)/RA-RES.EXE \
 		$(BUILD)/PROTOCHK.EXE $(BUILD)/CFGCHK.EXE $(BIN)/
 	cp $(BUNDLE)/README.TXT $(BUNDLE)/MTCP.CFG \
 		$(BUNDLE)/STARTTSR.BAT $(BUNDLE)/STOPTSR.BAT $(BIN)/
-	cd $(BIN) && sha256sum RAGENT.EXE RA-TSR.EXE PROTOCHK.EXE CFGCHK.EXE \
+	cd $(BIN) && sha256sum RAGENT.EXE RA-TSR.EXE RA-RES.EXE PROTOCHK.EXE CFGCHK.EXE \
 		> MANIFEST.SHA256
 
 clean:

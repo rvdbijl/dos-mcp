@@ -32,6 +32,7 @@ _DATA   SEGMENT WORD PUBLIC 'DATA'
         EXTRN   _ratsr_last_worker_bios_tick:WORD
         EXTRN   _ratsr_last_protocol_result:WORD
         EXTRN   _ratsr_last_send_result:WORD
+        EXTRN   _ratsr_resident_paragraphs:WORD
         EXTRN   _dm_receive_ready:BYTE
         EXTRN   _dm_receive_length:WORD
         EXTRN   _dm_receive_allocations:WORD
@@ -47,13 +48,16 @@ _DATA   SEGMENT WORD PUBLIC 'DATA'
 _DATA   ENDS
 
 _BSS    SEGMENT WORD PUBLIC 'BSS'
-idle_active     DB      ?
 saved_ss        DW      ?
 saved_sp        DW      ?
+idle_active     DB      ?
+        EVEN
 ; Packet decoding and response encoding each use roughly 1 KiB of bounded
 ; automatic storage and are nested below the worker.  Leave ample headroom for
 ; the DOS/BIOS wrappers used by file and keyboard operations.
-resident_stack  DB      32768 DUP (?)
+RATSR_STACK_SIZE EQU    32768
+RATSR_STACK_FILL EQU    0A5h
+resident_stack  DB      RATSR_STACK_SIZE DUP (?)
 resident_top    LABEL   WORD
         PUBLIC  _ratsr_resident_end
 _ratsr_resident_end LABEL BYTE
@@ -68,6 +72,10 @@ _TEXT   SEGMENT BYTE PUBLIC 'CODE'
         PUBLIC  ratsr_dos_idle_handler_
         PUBLIC  ratsr_multiplex_handler_
         PUBLIC  ratsr_bios_queue_word_
+        PUBLIC  ratsr_prime_stack_
+        PUBLIC  ratsr_stack_capacity_
+        PUBLIC  ratsr_stack_used_
+        PUBLIC  ratsr_stack_guard_ok_
         PUBLIC  ratsr_set_old_vectors_
         PUBLIC  ratsr_set_old_int08_
         PUBLIC  ratsr_set_old_int28_
@@ -102,6 +110,91 @@ ratsr_set_old_int28_ PROC NEAR
         mov     word ptr cs:[chain_int28+2],dx
         ret
 ratsr_set_old_int28_ ENDP
+
+; Prime the private stack before installing any resident vectors.
+ratsr_prime_stack_ PROC NEAR
+        pushf
+        push    es
+        push    di
+        push    cx
+        push    ax
+        mov     ax,ds
+        mov     es,ax
+        mov     di,offset resident_stack
+        mov     cx,RATSR_STACK_SIZE
+        mov     al,RATSR_STACK_FILL
+        cld
+        rep     stosb
+        pop     ax
+        pop     cx
+        pop     di
+        pop     es
+        popf
+        ret
+ratsr_prime_stack_ ENDP
+
+; Return the assembly-owned private-stack capacity in AX.
+ratsr_stack_capacity_ PROC NEAR
+        mov     ax,RATSR_STACK_SIZE
+        ret
+ratsr_stack_capacity_ ENDP
+
+; Return persistent private-stack high-water usage in AX.
+ratsr_stack_used_ PROC NEAR
+        pushf
+        push    es
+        push    di
+        push    cx
+        push    dx
+        mov     dx,ds
+        mov     es,dx
+        mov     di,offset resident_stack
+        mov     cx,RATSR_STACK_SIZE
+        mov     al,RATSR_STACK_FILL
+        cld
+        repe    scasb
+        je      stack_unused
+        mov     ax,cx
+        inc     ax
+        jmp     short stack_used_done
+stack_unused:
+        xor     ax,ax
+stack_used_done:
+        pop     dx
+        pop     cx
+        pop     di
+        pop     es
+        popf
+        ret
+ratsr_stack_used_ ENDP
+
+; Return one while the 32-byte low-stack guard is intact.
+ratsr_stack_guard_ok_ PROC NEAR
+        pushf
+        push    es
+        push    di
+        push    cx
+        push    dx
+        mov     dx,ds
+        mov     es,dx
+        mov     di,offset resident_stack
+        mov     cx,32
+        mov     al,RATSR_STACK_FILL
+        cld
+        repe    scasb
+        je      stack_guard_ok
+        xor     ax,ax
+        jmp     short stack_guard_done
+stack_guard_ok:
+        mov     ax,1
+stack_guard_done:
+        pop     dx
+        pop     cx
+        pop     di
+        pop     es
+        popf
+        ret
+ratsr_stack_guard_ok_ ENDP
 
 ; int ratsr_bios_queue_word(unsigned word)
 ;
@@ -346,6 +439,8 @@ ratsr_multiplex_handler_ PROC FAR
         je      multiplex_packet_counts
         cmp     bx,8
         je      multiplex_activity
+        cmp     bx,9
+        je      multiplex_memory
         xor     ax,ax
         iret
 
@@ -473,6 +568,21 @@ multiplex_activity:
         xchg    al,ah
         mov     si,ax
         mov     di,word ptr [_dm_receive_length]
+        pop     ds
+        mov     ax,05A5Ah
+        iret
+
+multiplex_memory:
+        push    ds
+        mov     ax,DGROUP
+        mov     ds,ax
+        call    ratsr_stack_used_
+        mov     cx,ax
+        mov     bx,RATSR_STACK_SIZE
+        mov     dx,word ptr [_ratsr_resident_paragraphs]
+        call    ratsr_stack_guard_ok_
+        mov     si,ax
+        mov     di,4229
         pop     ds
         mov     ax,05A5Ah
         iret

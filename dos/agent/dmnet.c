@@ -70,14 +70,28 @@ int dm_net_poll(dm_udp_datagram *datagram)
     ip = frame + ETH_HEADER;
     ip_header_length = (dm_u8)((ip[0] & 0x0F) * 4);
     ip_length = read_be16(ip + 2);
-    if ((ip[0] >> 4) != 4
-        || ip_header_length < IP_HEADER
-        || ip_length < ip_header_length + UDP_HEADER
-        || ETH_HEADER + ip_length > frame_length
-        || ip[9] != 17
-        || memcmp(ip + 16, local_ip, 4) != 0
-        || (read_be16(ip + 6) & 0x3FFF) != 0
-        || ip_checksum(ip, ip_header_length) != 0) {
+    if ((ip[0] >> 4) != 4 || ip_header_length < IP_HEADER) {
+        dm_packet_release_receive();
+        return 0;
+    }
+    if (ip_length < ip_header_length + UDP_HEADER
+        || ETH_HEADER + ip_length > frame_length) {
+        dm_packet_release_receive();
+        return 0;
+    }
+    if (ip[9] != 17) {
+        dm_packet_release_receive();
+        return 0;
+    }
+    if ((read_be16(ip + 6) & 0x3FFF) != 0) {
+        dm_packet_release_receive();
+        return 0;
+    }
+    if (memcmp(ip + 16, local_ip, 4) != 0) {
+        dm_packet_release_receive();
+        return 0;
+    }
+    if (ip_checksum(ip, ip_header_length) != 0) {
         dm_packet_release_receive();
         return 0;
     }

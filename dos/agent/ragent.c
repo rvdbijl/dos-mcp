@@ -2,6 +2,7 @@
 #include "dmnet.h"
 #include "dmpacket.h"
 #include "dmproto.h"
+#include "ratsr_install.h"
 
 #include <bios.h>
 #include <conio.h>
@@ -18,6 +19,7 @@
 #define RESPONSE_DATAGRAM_SIZE (DM_HEADER_SIZE + DM_MAX_FRAGMENT_PAYLOAD)
 #define REQUEST_BUFFER_SIZE 4229
 #define SCREEN_BUFFER_SIZE 4013
+#define RESIDENT_WORKSPACE_SIZE REQUEST_BUFFER_SIZE
 
 #ifdef RA_TSR
 #define RESPONSE_FRAGMENT_PAYLOAD 256
@@ -41,16 +43,16 @@
 #define ADAPTER_VGA 4
 
 #ifdef RA_TSR
-#define TSR_MULTIPLEX 0xD05A
-#define TSR_REPLY 0x5A5A
+#define TSR_MULTIPLEX RATSR_MULTIPLEX
+#define TSR_REPLY RATSR_REPLY
 #define TRANSFER_NONE 0
 #define TRANSFER_READ 1
 #define TRANSFER_WRITE 2
 #define TRANSFER_GRAPHICS 3
 #define TRANSFER_BLOCK_MAX 900
 #define TSR_FILE_MAX 1048576UL
-#define TSR_PATH_MAX 127
-#define TSR_NAME_MAX 31
+#define TSR_PATH_MAX RATSR_PATH_MAX
+#define TSR_NAME_MAX RATSR_NAME_MAX
 #define DISCOVERY_PORT 21301
 #define DISCOVERY_INTERVAL_TICKS 91
 #define SESSION_IDLE_TICKS 546
@@ -60,7 +62,7 @@
 #define LAYOUT_PLANAR_4BPP 4
 #define LAYOUT_PLANAR_1BPP 5
 #define LAYOUT_PACKED_8BPP 6
-#define DIAGNOSTICS_VERSION 1
+#define DIAGNOSTICS_VERSION 2
 #define DIAG_OWNS_INT08 0x01
 #define DIAG_OWNS_INT1C 0x02
 #define DIAG_OWNS_INT28 0x04
@@ -87,6 +89,9 @@ typedef struct agent_session {
     dm_u16 response_request_id;
     dm_u16 response_payload_length;
     dm_u16 last_activity_tick;
+    dm_u8 hello_pending;
+    dm_u16 hello_length;
+    dm_u8 hello_datagram[DM_HEADER_SIZE + 12];
 #endif
 #ifdef RA_TSR
     dm_u16 response_lengths[1];
@@ -99,13 +104,24 @@ typedef struct agent_session {
 
 static dm_u8 base_key[16];
 static agent_session session;
+#ifdef RA_TSR
+static union {
+    dm_u8 request[REQUEST_BUFFER_SIZE];
+    dm_u8 screen[SCREEN_BUFFER_SIZE];
+} resident_workspace;
+#define request_buffer resident_workspace.request
+#define screen_buffer resident_workspace.screen
+#else
 static dm_u8 request_buffer[REQUEST_BUFFER_SIZE];
+#endif
 static dm_u16 request_fragment_lengths[DM_MAX_FRAGMENTS];
 static dm_u32 request_fragment_mask;
 static dm_u16 request_id;
 static dm_u8 request_fragment_count;
 static dm_u8 request_opcode;
+#ifndef RA_TSR
 static dm_u8 screen_buffer[SCREEN_BUFFER_SIZE];
+#endif
 #ifndef RA_TSR
 static dm_u8 running = 1;
 #endif
@@ -129,6 +145,7 @@ volatile dm_u16 ratsr_last_worker_bios_tick;
 volatile int ratsr_last_protocol_result;
 volatile dm_u8 ratsr_last_opcode;
 volatile int ratsr_last_send_result;
+dm_u16 ratsr_resident_paragraphs;
 static char sandbox_root[TSR_PATH_MAX + 1];
 static char agent_name[TSR_NAME_MAX + 1];
 static dm_u8 discovery_open_mode;
@@ -167,6 +184,10 @@ extern void __interrupt __far ratsr_timer_handler(void);
 extern void __interrupt __far ratsr_dos_idle_handler(void);
 extern void __interrupt __far ratsr_multiplex_handler(void);
 extern int ratsr_bios_queue_word(dm_u16 word);
+extern void ratsr_prime_stack(void);
+extern dm_u16 ratsr_stack_capacity(void);
+extern dm_u16 ratsr_stack_used(void);
+extern dm_u16 ratsr_stack_guard_ok(void);
 extern void ratsr_set_old_vectors(
     dm_u16 int1c_offset,
     dm_u16 int1c_segment,
@@ -178,6 +199,14 @@ extern void ratsr_set_old_int28(dm_u16 offset, dm_u16 segment);
 extern char __far ratsr_resident_end;
 #endif
 
+#ifdef RA_TSR
+extern unsigned _STACKTOP;
+static dm_u16 current_ss(void);
+#pragma aux current_ss = "mov ax,ss" value [ax]
+static dm_u16 resident_paragraph_count(void);
+#endif
+
+#ifndef RA_TSR
 static int parse_ip(const char *text, dm_u8 output[4]);
 static int parse_u16(const char *text, dm_u16 *output);
 static int parse_u8(const char *text, dm_u8 *output);
@@ -198,6 +227,7 @@ static int parse_credential(
     dm_u8 *open_mode
 );
 static int is_hex_key(const char *text);
+#endif
 static int request_is_newer(dm_u16 candidate, dm_u16 previous);
 static dm_u32 make_nonce(void);
 static void process_datagram(const dm_udp_datagram *datagram);
@@ -247,8 +277,7 @@ static void print_prompt(void);
 static dm_u32 read_bios_ticks(void);
 static dm_u8 detect_adapter(dm_u8 video_mode);
 #ifdef RA_TSR
-static int uninstall_tsr(void);
-static int configure_tsr(int argc, char **argv, const char *mtcp_hostname);
+static int load_install_config(ratsr_install_config *configuration);
 static void keep_resident(void);
 static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length);
 static int safe_relative_path(const char *path);
@@ -346,86 +375,31 @@ int main(int argc, char **argv)
 #else
 int main(int argc, char **argv)
 {
-    dm_u8 ip[4] = {10, 0, 2, 15};
-    dm_u16 port = AGENT_PORT;
-    dm_u8 packet_interrupt = 0x60;
-    char mtcp_hostname[DM_MTCP_HOSTNAME_MAX + 1];
-    dm_u8 open_mode;
+    ratsr_install_config configuration;
     union REGS input;
     union REGS output;
     union REGPACK registers;
     int result;
 
-    if (argc == 2 && stricmp(argv[1], "/U") == 0)
-        return uninstall_tsr();
-    if (argc > 8) {
-        puts("Usage: RA-TSR [credential] [ip] [port] [packet-int] [root] [access] [name]");
-        puts("  access: - (none), R, W, or RW; name: 1-31 visible ASCII");
-        puts("  root: existing directory, or ALL for unrestricted DOS drives");
-        puts("  unload with RA-TSR /U");
-        return 1;
-    }
+    (void)argc;
+    (void)argv;
+    if (load_install_config(&configuration) != 0)
+        return 10;
     memset(&input, 0, sizeof(input));
     input.x.ax = TSR_MULTIPLEX;
     input.x.bx = 0;
     int86(0x2F, &input, &output);
-    if (output.x.ax == TSR_REPLY) {
-        dm_u16 ticks;
-        dm_u16 receive_ready;
-        dm_u16 receive_length;
-        int protocol_result;
-        int send_result;
-
-        delay(1000);
-        memset(&input, 0, sizeof(input));
-        input.x.ax = TSR_MULTIPLEX;
-        input.x.bx = 2;
-        int86(0x2F, &input, &output);
-        ticks = output.x.bx;
-        receive_ready = output.x.cx;
-        receive_length = output.x.dx;
-        protocol_result = (int)output.x.si;
-        send_result = (int)output.x.di;
-        printf("RA-TSR: installed, ticks %u, receive %u/%u, protocol %d/%d\n",
-            ticks, receive_ready, receive_length,
-            protocol_result, send_result);
-        memset(&input, 0, sizeof(input));
-        input.x.ax = TSR_MULTIPLEX;
-        input.x.bx = 6;
-        int86(0x2F, &input, &output);
-        printf("  timer: int08 %u, int1c %u, int28 %u, workers %u, fallback %u\n",
-            output.x.bx, output.x.cx, output.x.dx,
-            output.x.si, output.x.di);
-        memset(&input, 0, sizeof(input));
-        input.x.ax = TSR_MULTIPLEX;
-        input.x.bx = 7;
-        int86(0x2F, &input, &output);
-        printf("  packet: busy %u, allocate %u, complete %u, drop %u, send %u\n",
-            output.x.bx, output.x.cx, output.x.dx,
-            output.x.si, output.x.di);
-        memset(&input, 0, sizeof(input));
-        input.x.ax = TSR_MULTIPLEX;
-        input.x.bx = 8;
-        int86(0x2F, &input, &output);
-        printf("  activity: send failures %u, last rx/worker %u/%u, PIC %02X/%02X\n",
-            output.x.bx, output.x.cx, output.x.dx,
-            output.x.si & 0xFF, output.x.si >> 8);
-        return 2;
-    }
-    if (parse_credential(argc >= 2 ? argv[1] : 0, base_key, &open_mode) != 0) {
-        puts("RA-TSR: invalid or empty credential");
-        return 3;
-    }
-    mtcp_hostname[0] = 0;
-    if (configure_network(
-        argc, argv, ip, &port, &packet_interrupt,
-        mtcp_hostname, argc < 8 || strcmp(argv[7], "-") == 0, "RA-TSR"
-    ) != 0)
-        return 5;
-    if (configure_tsr(argc, argv, mtcp_hostname) != 0) {
-        puts("RA-TSR: invalid sandbox root, access mode, or name");
-        return 5;
-    }
+    if (output.x.ax == TSR_REPLY)
+        return 11;
+    memcpy(base_key, configuration.key, sizeof(base_key));
+    strcpy(sandbox_root, configuration.root);
+    strcpy(agent_name, configuration.name);
+    allow_file_read =
+        (configuration.flags & RATSR_INSTALL_READ) != 0;
+    allow_file_write =
+        (configuration.flags & RATSR_INSTALL_WRITE) != 0;
+    unrestricted_filesystem =
+        (configuration.flags & RATSR_INSTALL_ALL_DRIVES) != 0;
     memset(&input, 0, sizeof(input));
     input.h.ah = 0x30;
     intdos(&input, &output);
@@ -435,14 +409,17 @@ int main(int argc, char **argv)
         *(volatile dm_u8 __far *)MK_FP(0x40, 0x49)
     );
     memset(&session, 0, sizeof(session));
-    discovery_open_mode = open_mode;
+    discovery_open_mode =
+        (configuration.flags & RATSR_INSTALL_OPEN_MODE) != 0;
     discovery_last_tick = (dm_u16)(0 - DISCOVERY_INTERVAL_TICKS);
-    advertised_port = port;
-    result = dm_net_open(packet_interrupt, ip, port);
-    if (result != 0) {
-        printf("RA-TSR: packet driver initialization failed (%d)\n", result);
-        return 6;
-    }
+    advertised_port = configuration.port;
+    result = dm_net_open(
+        configuration.packet_interrupt,
+        configuration.ip,
+        configuration.port
+    );
+    if (result != 0)
+        return 20 - result;
     agent_start_ticks = read_bios_ticks();
     ratsr_psp = _psp;
     memset(&registers, 0, sizeof(registers));
@@ -469,30 +446,23 @@ int main(int argc, char **argv)
         _FP_OFF(ratsr_old_int28),
         _FP_SEG(ratsr_old_int28)
     );
+    ratsr_resident_paragraphs = resident_paragraph_count();
+    if (!ratsr_resident_paragraphs) {
+        dm_net_close();
+        return 30;
+    }
+    ratsr_prime_stack();
     ratsr_enabled = 1;
     _dos_setvect(0x1C, ratsr_idle_handler);
     _dos_setvect(0x08, ratsr_timer_handler);
     _dos_setvect(0x28, ratsr_dos_idle_handler);
     _dos_setvect(0x2F, ratsr_multiplex_handler);
-    printf("RA-TSR 0.2 \"%s\" installed at %u.%u.%u.%u:%u, packet int 0x%02X, video %u, root %s, access %s%s\n",
-        agent_name, ip[0], ip[1], ip[2], ip[3], port,
-        packet_interrupt, cached_adapter, sandbox_root,
-        allow_file_read ? "R" : "",
-        allow_file_write ? "W" : "");
-    if (!allow_file_read && !allow_file_write)
-        puts("Filesystem access disabled.");
-    if (unrestricted_filesystem
-        && (allow_file_read || allow_file_write))
-        puts("WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.");
-    if (open_mode)
-        puts("WARNING: OPEN MODE - packets are not authenticated.");
-    puts("Unload with RA-TSR /U.");
-    fflush(stdout);
     keep_resident();
     return 0;
 }
 #endif
 
+#ifndef RA_TSR
 static int parse_ip(const char *text, dm_u8 output[4])
 {
     unsigned values[4];
@@ -682,6 +652,7 @@ static int is_hex_key(const char *text)
     }
     return 1;
 }
+#endif
 
 static int request_is_newer(dm_u16 candidate, dm_u16 previous)
 {
@@ -784,7 +755,9 @@ static void process_hello(const dm_packet *packet, const dm_net_peer *peer)
     dm_u32 server_nonce;
     dm_u8 response[12];
     dm_packet reply;
+#ifndef RA_TSR
     dm_u8 datagram[DM_HEADER_SIZE + 12];
+#endif
     dm_u16 datagram_length;
 
     if (packet->payload_length != 4 || packet->fragment_count != 1)
@@ -809,8 +782,20 @@ static void process_hello(const dm_packet *packet, const dm_net_peer *peer)
     reply.payload_length = sizeof(response);
     reply.payload = response;
     if (dm_packet_encode(
-        &reply, base_key, datagram, sizeof(datagram), &datagram_length) == DM_OK)
+#ifdef RA_TSR
+        &reply, base_key, session.hello_datagram,
+        sizeof(session.hello_datagram), &datagram_length
+#else
+        &reply, base_key, datagram, sizeof(datagram), &datagram_length
+#endif
+    ) == DM_OK) {
+#ifdef RA_TSR
+        session.hello_length = datagram_length;
+        session.hello_pending = 1;
+#else
         dm_net_send(peer, datagram, datagram_length);
+#endif
+    }
     dm_derive_session_key(base_key, client_nonce, server_nonce, session.key);
     session.active = 1;
 #ifdef RA_TSR
@@ -1071,7 +1056,7 @@ static dm_u16 build_status(dm_u8 *output)
     output[0] = 0;
     output[1] =
 #ifdef RA_TSR
-        2;
+        3;
     output[2] = cached_dos_major;
     output[3] = cached_dos_minor;
 #else
@@ -1168,7 +1153,13 @@ static dm_u16 build_diagnostics(dm_u8 *output)
     dm_put_u16(output + 36, (dm_u16)ratsr_last_send_result);
     output[38] = ratsr_last_opcode;
     output[39] = 0;
-    return 40;
+    dm_put_u16(output + 40, ratsr_stack_capacity());
+    dm_put_u16(output + 42, ratsr_stack_used());
+    dm_put_u16(output + 44, ratsr_resident_paragraphs);
+    dm_put_u16(output + 46, RESIDENT_WORKSPACE_SIZE);
+    output[48] = ratsr_stack_guard_ok() ? 0 : 1;
+    output[49] = 0;
+    return 50;
 }
 
 static dm_u8 owns_vector(
@@ -1544,6 +1535,71 @@ static dm_u8 detect_adapter(dm_u8 video_mode)
 }
 
 #ifdef RA_TSR
+static int load_install_config(
+    ratsr_install_config *configuration
+)
+{
+    const char *source = getenv("RATSR_CONFIG");
+    dm_u16 expected_crc;
+    dm_u16 index;
+
+    if (!source || strlen(source) != sizeof(*configuration) * 2)
+        return -1;
+    for (index = 0; index < sizeof(*configuration); ++index) {
+        dm_u8 value = 0;
+        dm_u8 nibble;
+        dm_u8 half;
+
+        for (half = 0; half < 2; ++half) {
+            char character = *source++;
+
+            if (character >= '0' && character <= '9')
+                nibble = (dm_u8)(character - '0');
+            else if (character >= 'A' && character <= 'F')
+                nibble = (dm_u8)(character - 'A' + 10);
+            else
+                return -1;
+            value = (dm_u8)((value << 4) | nibble);
+        }
+        ((dm_u8 *)configuration)[index] = value;
+    }
+    expected_crc = configuration->crc16;
+    configuration->crc16 = 0;
+    if (configuration->magic != RATSR_INSTALL_MAGIC
+        || configuration->version != RATSR_INSTALL_VERSION
+        || configuration->size != sizeof(*configuration)
+        || dm_crc16_ccitt(
+            (const dm_u8 *)configuration,
+            sizeof(*configuration)
+        ) != expected_crc
+        || !configuration->port
+        || !configuration->packet_interrupt
+        || !configuration->root_length
+        || configuration->root_length > RATSR_PATH_MAX
+        || !configuration->name_length
+        || configuration->name_length > RATSR_NAME_MAX
+        || configuration->root[configuration->root_length] != 0
+        || configuration->name[configuration->name_length] != 0
+        || (configuration->flags
+            & ~(RATSR_INSTALL_READ
+                | RATSR_INSTALL_WRITE
+                | RATSR_INSTALL_ALL_DRIVES
+                | RATSR_INSTALL_OPEN_MODE)))
+        return -1;
+    configuration->crc16 = expected_crc;
+    for (index = 0; index < configuration->root_length; ++index) {
+        if (!configuration->root[index])
+            return -1;
+    }
+    for (index = 0; index < configuration->name_length; ++index) {
+        unsigned char value = (unsigned char)configuration->name[index];
+
+        if (value < 33 || value > 126)
+            return -1;
+    }
+    return 0;
+}
+
 void ratsr_idle_worker(dm_u16 dos_idle)
 {
     dm_udp_datagram datagram;
@@ -1619,13 +1675,25 @@ void ratsr_idle_worker(dm_u16 dos_idle)
             session.response_pending = 0;
         return;
     }
+#ifdef RA_TSR
+    if (session.hello_pending) {
+        ratsr_last_send_result = dm_net_send(
+            &session.peer,
+            session.hello_datagram,
+            session.hello_length
+        );
+        session.hello_pending = 0;
+        return;
+    }
+#endif
     if (dm_net_poll(&datagram)) {
-        if (datagram.payload_length >= DM_HEADER_SIZE
+        dm_u8 dos_operation = datagram.payload_length >= DM_HEADER_SIZE
             && datagram.payload[4] >= DM_OP_FILE_READ_BEGIN
             && datagram.payload[4] <= DM_OP_FILE_ABORT
             && !(datagram.payload[4] == DM_OP_FILE_ABORT
-                && transfer_kind == TRANSFER_GRAPHICS)
-            && (!dos_idle || *critical_error_flag))
+                && transfer_kind == TRANSFER_GRAPHICS);
+
+        if (dos_operation && (!dos_idle || *critical_error_flag))
             return;
         process_datagram(&datagram);
         dm_net_release();
@@ -1637,6 +1705,7 @@ void ratsr_prepare_unload(void)
     ratsr_enabled = 0;
 }
 
+#ifndef RA_TSR_CORE
 static int uninstall_tsr(void)
 {
     union REGPACK registers;
@@ -1756,6 +1825,7 @@ static int uninstall_tsr(void)
     puts("RA-TSR unloaded.");
     return 0;
 }
+#endif
 
 static void send_discovery(void)
 {
@@ -1783,6 +1853,7 @@ static void send_discovery(void)
     dm_net_broadcast(DISCOVERY_PORT, payload, length + 2);
 }
 
+#ifndef RA_TSR_CORE
 static int configure_tsr(int argc, char **argv, const char *mtcp_hostname)
 {
     char current[TSR_PATH_MAX + 1];
@@ -1823,24 +1894,34 @@ static int configure_tsr(int argc, char **argv, const char *mtcp_hostname)
         return -1;
     return 0;
 }
+#endif
 
 static void keep_resident(void)
 {
     dm_u16 environment =
         *(dm_u16 __far *)MK_FP(_psp, 0x2C);
-    /*
-     * Keep 128 KiB, including the PSP, code/data, receive buffers, and the
-     * private 32 KiB interrupt-worker stack.  This intentionally trades a
-     * little conventional memory for bounded stack headroom on small DOS
-     * systems until the linker-derived resident size is validated across all
-     * supported OpenWatcom memory models.
-     */
-    dm_u16 paragraphs = 0x2000;
 
-    (void)ratsr_resident_end;
     if (environment)
         _dos_freemem(environment);
-    _dos_keep(0, paragraphs);
+    _dos_keep(0, ratsr_resident_paragraphs);
+}
+
+static dm_u16 resident_paragraph_count(void)
+{
+    dm_u16 allocation_end =
+        *(dm_u16 __far *)MK_FP(_psp, 0x02);
+    dm_u16 stack_segment = current_ss();
+    dm_u16 stack_top = _STACKTOP;
+    dm_u16 paragraphs;
+
+    if (stack_segment < _psp || allocation_end <= _psp)
+        return 0;
+    paragraphs = (dm_u16)(stack_segment - _psp) + (stack_top >> 4);
+    if (stack_top & 15)
+        ++paragraphs;
+    if (!paragraphs || paragraphs > (dm_u16)(allocation_end - _psp))
+        return 0;
+    return paragraphs;
 }
 
 static dm_u32 crc32_update(dm_u32 crc, const dm_u8 *data, dm_u16 length)

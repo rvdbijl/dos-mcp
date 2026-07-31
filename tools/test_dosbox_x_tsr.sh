@@ -19,6 +19,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 make -C "$repo_root/dos" WATCOM="$watcom_root" all
+if [[ -n "${TSR_BINARY:-}" ]]; then
+    cp -- "$TSR_BINARY" "$build_dir/RA-TSR.EXE"
+fi
 cp -- "$repo_root/dos/tests/mtcp-dosbox.cfg" "$build_dir/MTCP.CFG"
 
 if [[ -n "$packet_driver" ]]; then
@@ -30,7 +33,7 @@ if [[ ! -f "$build_dir/NE2000.COM" ]]; then
 fi
 rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/ZERO.LOG" \
     "$build_dir/ZERO-U.LOG" "$build_dir/TSR.LOG" "$build_dir/QUERY.LOG" \
-    "$build_dir/UNLOAD.LOG"
+    "$build_dir/UNLOAD.LOG" "$build_dir/COREERR.LOG"
 rm -rf -- "$build_dir/REMOTE"
 
 (
@@ -49,11 +52,16 @@ dosbox_pid=$!
 if ! UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/dos-mcp-uv-cache}" \
     uv run --offline python "$repo_root/tools/dosbox_tsr_e2e.py"; then
     echo "DOSBox-X log:" >&2
-    tail -100 "$test_dir/dosbox.log" >&2
+    tail -10 "$test_dir/dosbox.log" >&2
+    grep -E -m1 'Bochs port E9h|Illegal Unhandled' "$test_dir/dosbox.log" \
+        >&2 || true
+    grep -n -m1 -B10 'Illegal Unhandled' "$test_dir/dosbox.log" >&2 || true
     echo "RA-TSR install log:" >&2
     [[ -f "$build_dir/TSR.LOG" ]] && cat "$build_dir/TSR.LOG" >&2
     echo "RA-TSR query log:" >&2
     [[ -f "$build_dir/QUERY.LOG" ]] && cat "$build_dir/QUERY.LOG" >&2
+    echo "Resident core error log:" >&2
+    [[ -f "$build_dir/COREERR.LOG" ]] && cat "$build_dir/COREERR.LOG" >&2
     exit 1
 fi
 
@@ -68,6 +76,7 @@ grep -Fq 'using MTCPCFG C:\MTCP.CFG' "$build_dir/TSR.LOG"
 grep -Fq 'root ALL, access RW' "$build_dir/TSR.LOG"
 grep -Fq 'WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.' \
     "$build_dir/TSR.LOG"
-grep -Fq '"DOSBOX-TSR" installed at 10.0.2.15:21300' \
+grep -Fq 'loading "DOSBOX-TSR" at 10.0.2.15:21300' \
     "$build_dir/ZERO.LOG"
+grep -Fq 'memory: resident' "$build_dir/QUERY.LOG"
 grep -q "RA-TSR unloaded" "$build_dir/ZERO-U.LOG"

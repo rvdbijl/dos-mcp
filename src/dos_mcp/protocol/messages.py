@@ -29,6 +29,7 @@ _TRANSFER_END_RESPONSE = struct.Struct("<II")
 _FILE_WRITE_BEGIN = struct.Struct("<BIIB")
 _GRAPHICS_BEGIN_RESPONSE = struct.Struct("<HBBBBHHII")
 _RESIDENT_DIAGNOSTICS = struct.Struct("<BB15HBBhhBB")
+_RESIDENT_MEMORY_DIAGNOSTICS = struct.Struct("<4HBB")
 
 MAX_TRANSFER_BLOCK = 900
 MAX_DOS_PATH_BYTES = 80
@@ -129,11 +130,16 @@ class ResidentDiagnosticsMessage:
     last_protocol_result: int
     last_send_result: int
     last_opcode: int
+    stack_size: int = 0
+    stack_used: int = 0
+    resident_paragraphs: int = 0
+    workspace_size: int = 0
+    stack_overflow: bool = False
 
     def encode(self) -> bytes:
-        if self.version != 1:
+        if self.version not in {1, 2}:
             raise ValueError("unsupported resident diagnostics version")
-        return _RESIDENT_DIAGNOSTICS.pack(
+        base = _RESIDENT_DIAGNOSTICS.pack(
             self.version,
             int(self.flags),
             self.int08_entries,
@@ -158,15 +164,48 @@ class ResidentDiagnosticsMessage:
             self.last_opcode,
             0,
         )
+        if self.version == 1:
+            if any(
+                (
+                    self.stack_size,
+                    self.stack_used,
+                    self.resident_paragraphs,
+                    self.workspace_size,
+                    self.stack_overflow,
+                )
+            ):
+                raise ValueError("version 1 diagnostics cannot carry memory data")
+            return base
+        return base + _RESIDENT_MEMORY_DIAGNOSTICS.pack(
+            self.stack_size,
+            self.stack_used,
+            self.resident_paragraphs,
+            self.workspace_size,
+            int(self.stack_overflow),
+            0,
+        )
 
     @classmethod
     def decode(cls, payload: bytes) -> ResidentDiagnosticsMessage:
-        _require_size(payload, _RESIDENT_DIAGNOSTICS.size, "resident diagnostics")
-        raw = _RESIDENT_DIAGNOSTICS.unpack(payload)
-        if raw[0] != 1:
+        if len(payload) < _RESIDENT_DIAGNOSTICS.size:
+            raise ValueError("truncated resident diagnostics")
+        raw = _RESIDENT_DIAGNOSTICS.unpack_from(payload)
+        if raw[0] not in {1, 2}:
             raise ValueError("unsupported resident diagnostics version")
+        expected = _RESIDENT_DIAGNOSTICS.size
+        if raw[0] == 2:
+            expected += _RESIDENT_MEMORY_DIAGNOSTICS.size
+        _require_size(payload, expected, "resident diagnostics")
         if raw[-1] != 0:
             raise ValueError("resident diagnostics reserved byte is nonzero")
+        memory = (0, 0, 0, 0, 0, 0)
+        if raw[0] == 2:
+            memory = _RESIDENT_MEMORY_DIAGNOSTICS.unpack_from(
+                payload,
+                _RESIDENT_DIAGNOSTICS.size,
+            )
+            if memory[-1] != 0 or memory[4] not in {0, 1}:
+                raise ValueError("invalid resident memory diagnostics")
         return cls(
             version=raw[0],
             flags=ResidentDiagnosticFlag(raw[1]),
@@ -190,6 +229,11 @@ class ResidentDiagnosticsMessage:
             last_protocol_result=raw[19],
             last_send_result=raw[20],
             last_opcode=raw[21],
+            stack_size=memory[0],
+            stack_used=memory[1],
+            resident_paragraphs=memory[2],
+            workspace_size=memory[3],
+            stack_overflow=bool(memory[4]),
         )
 
 

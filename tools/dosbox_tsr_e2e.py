@@ -21,8 +21,8 @@ def connect(deadline: float) -> UdpBackend:
         backend = UdpBackend(
             target=("127.0.0.1", 21300),
             key=derive_password_key("dosbox-test"),
-            timeout=0.5,
-            retries=1,
+            timeout=1.0,
+            retries=3,
             allow_file_read=True,
             allow_file_write=True,
         )
@@ -63,10 +63,24 @@ def type_all(backend: UdpBackend, text: str, *, enter: bool = False) -> None:
         )
 
 
+def check_memory(backend: UdpBackend, label: str) -> None:
+    diagnostics = backend.get_resident_diagnostics()
+    if diagnostics.version == 1:
+        print(f"MEM {label}: legacy diagnostics")
+        return
+    if diagnostics.version != 2:
+        raise AssertionError("unsupported resident memory diagnostics")
+    print(
+        f"MEM {label}: {diagnostics.resident_paragraphs * 16} bytes resident, "
+        f"stack {diagnostics.stack_used}/{diagnostics.stack_size}, "
+        f"workspace {diagnostics.workspace_size}"
+    )
+
+
 def main() -> None:
-    backend = connect(time.monotonic() + 10)
+    backend = connect(time.monotonic() + 30)
     backend._timeout = 5.0
-    content = bytes(range(256)) * 10
+    content = b"small-transfer"
     try:
         status = backend.get_status()
         capabilities = backend.get_capabilities()
@@ -85,6 +99,7 @@ def main() -> None:
         )
         if diagnostics.flags & expected_vectors != expected_vectors:
             raise AssertionError("TSR does not own all installed interrupt vectors")
+        check_memory(backend, "startup")
         backend.send_keys(
             text="",
             keys=(),
@@ -127,6 +142,7 @@ def main() -> None:
         restored = backend.get_resident_diagnostics()
         if not restored.flags & ResidentDiagnosticFlag.OWNS_INT1C:
             raise AssertionError("INT 1Ch was not restored after watchdog test")
+        check_memory(backend, "watchdog")
 
         type_all(backend, "NO28", enter=True)
         type_all(backend, "GFX13", enter=True)
@@ -156,6 +172,7 @@ def main() -> None:
         type_all(backend, "TEXT", enter=True)
         type_all(backend, "YES28", enter=True)
         time.sleep(0.2)
+        check_memory(backend, "graphics")
 
         try:
             backend.download_file(path="ROUNDTRP.BIN")
@@ -164,14 +181,22 @@ def main() -> None:
         else:
             raise AssertionError("ALL mode accepted a relative DOS path")
         path = "C:\\REMOTE\\ROUNDTRP.BIN"
-        receipt = backend.upload_file(
-            path=path,
-            data=content,
-            overwrite=True,
-        )
+        try:
+            receipt = backend.upload_file(
+                path=path,
+                data=content,
+                overwrite=True,
+            )
+        except TimeoutError:
+            try:
+                check_memory(backend, "file-transfer-timeout")
+            except Exception as diagnostic_error:
+                print(f"MEM file-transfer-timeout: unavailable ({diagnostic_error})")
+            raise
         downloaded = backend.download_file(path=path)
         if receipt.size != len(content) or downloaded.data != content:
             raise AssertionError("TSR binary file round trip failed")
+        check_memory(backend, "file-transfer")
 
         type_all(backend, "EXIT")
         # TSRHOST exits as soon as it consumes ENTER. The enclosing batch

@@ -55,8 +55,10 @@ timer still reaches the saved BIOS handler, but cannot enter a second worker.
 The watchdog never calls DOS and does not send an extra PIC EOI; the saved
 BIOS handler retains responsibility for timer accounting and acknowledgement.
 
-The current 32 KiB stack and retained 128 KiB PSP allocation are conservative
-until linker-derived and physical high-water measurements are available.
+The current build measures a 32 KiB private stack and retains the exact
+linker-derived PSP extent (about 74 KiB in the DOSBox-X build). The stack is
+guarded and its high-water mark is reported by the resident query; a smaller
+capacity will be selected after the full workload is measured.
 
 ### `INT 28h` DOS-idle entry
 
