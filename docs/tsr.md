@@ -127,10 +127,11 @@ The packet-driver receive callback is an assembly producer only. It offers a
 fixed 1,518-byte buffer, records the completed length, and returns. It never
 parses a request or calls DOS.
 
-The resident worker has three chained entries on one private stack. `INT 1Ch`
-handles normal timer-safe networking, screen, graphics, and keyboard work.
-`INT 08h` first invokes the saved BIOS timer and runs the same non-DOS worker
-only when that BIOS chain did not reach RA-TSR's `INT 1Ch`. `INT 28h` is the
+The resident worker runs from two entries on one private stack. `INT 08h`
+first invokes the saved BIOS timer and then, after the BIOS has acknowledged
+IRQ0, handles timer-safe networking, screen, graphics, and keyboard work.
+`INT 1Ch` only counts entries, because the BIOS calls it before EOI while the
+keyboard and NIC IRQs are still blocked. `INT 28h` is the
 only entry allowed to perform DOS filesystem calls. An active flag prevents
 nested worker execution while still chaining nested interrupts. The worker:
 

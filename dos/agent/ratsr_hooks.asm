@@ -251,10 +251,10 @@ queue_done:
         ret
 ratsr_bios_queue_word_ ENDP
 
-; Hardware timer watchdog.  The old BIOS handler is called before any worker
-; activity.  A conventional BIOS handler invokes INT 1Ch; if our INT 1Ch entry
-; counter did not advance, the application has bypassed that cooperative hook
-; and this handler supplies one non-DOS worker opportunity.
+; Hardware timer worker.  The old BIOS handler is called first, so IRQ0 has
+; been acknowledged (EOI) before any worker activity and the NIC and keyboard
+; IRQs can still be serviced while the worker talks to the packet driver.
+; The fallback counter still records ticks where INT 1Ch was bypassed.
 ratsr_timer_handler_ PROC FAR
         push    ax
         push    ds
@@ -280,14 +280,15 @@ ratsr_timer_handler_ PROC FAR
         push    es
         mov     ax,DGROUP
         mov     ds,ax
-        mov     bx,word ptr [_ratsr_int1c_entries]
-        cmp     bx,word ptr cs:[int08_int1c_before]
-        jne     timer_done
         cmp     byte ptr [idle_active],0
         jne     timer_busy
         mov     byte ptr [idle_active],1
         inc     word ptr [_ratsr_worker_runs]
+        mov     bx,word ptr [_ratsr_int1c_entries]
+        cmp     bx,word ptr cs:[int08_int1c_before]
+        jne     timer_saw_int1c
         inc     word ptr [_ratsr_fallback_runs]
+timer_saw_int1c:
         mov     word ptr [saved_ss],ss
         mov     word ptr [saved_sp],sp
         cli
@@ -332,31 +333,12 @@ ratsr_idle_handler_ PROC FAR
         push    es
         mov     ax,DGROUP
         mov     ds,ax
+        ; Count only.  Many AT BIOSes call INT 1Ch before sending EOI for
+        ; IRQ0, so every lower-priority IRQ (keyboard, NIC) is blocked here.
+        ; A packet driver that waits for its own TX interrupt (3C90XPD.COM)
+        ; deadlocks if the worker sends from this context.  The worker runs
+        ; from INT 08h after the BIOS handler has returned (after EOI).
         inc     word ptr [_ratsr_int1c_entries]
-        cmp     byte ptr [idle_active],0
-        jne     idle_busy
-        mov     byte ptr [idle_active],1
-        inc     word ptr [_ratsr_worker_runs]
-        mov     word ptr [saved_ss],ss
-        mov     word ptr [saved_sp],sp
-        cli
-        mov     ss,ax
-        mov     sp,offset resident_top
-        cld
-        sti
-        xor     ax,ax
-        call    ratsr_idle_worker_
-        cli
-        mov     ax,word ptr [saved_ss]
-        mov     ss,ax
-        mov     sp,word ptr [saved_sp]
-        mov     byte ptr [idle_active],0
-        jmp     short idle_chain
-
-idle_busy:
-        inc     word ptr [_ratsr_busy_skips]
-
-idle_chain:
         pop     es
         pop     ds
         pop     bp

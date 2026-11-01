@@ -81,10 +81,10 @@ packet IRQ/upcall
    ▼
 resident fixed receive buffer
    │
-INT 08h hardware timer watchdog
-   │ chains BIOS first; falls back only if RA INT 1Ch was bypassed
+INT 08h hardware timer entry
+   │ chains BIOS first; worker runs after the BIOS EOI
    ▼
-INT 1Ch timer entry / INT 28h DOS-idle entry
+INT 08h timer worker / INT 28h DOS-idle entry   (INT 1Ch: count only)
    │ shared nested-work guard + private stack
    │
    ├── session timeout / disconnected announcement

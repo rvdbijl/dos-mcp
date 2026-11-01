@@ -169,7 +169,8 @@ normally if the chain cannot be restored safely.
 Run `RA-TSR` without arguments after returning to DOS and compare its counters:
 
 - increasing `int08` with a stationary `int1c` and increasing `fallback`
-  means the foreground program bypassed `INT 1Ch`; the watchdog is operating;
+  means the foreground program bypassed `INT 1Ch`; the worker still runs from
+  `INT 08h`;
 - increasing timer counters with stationary packet `allocate`/`complete`
   counts means the NIC IRQ, packet driver, or AT PIC cascade stopped delivery;
 - increasing packet completion with stationary worker counts indicates a

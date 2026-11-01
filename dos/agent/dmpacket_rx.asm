@@ -2,8 +2,10 @@
 ;
 ; A packet driver calls this far entry point twice.  AX=0 asks for a
 ; destination buffer and expects ES:DI in return.  AX=1 reports that CX
-; bytes have been copied.  Crynwr drivers tolerate either RETF or IRET;
-; using IRET matches the callback contract and the original Turbo C sample.
+; bytes have been copied.  The packet-driver specification calls the
+; receiver with a FAR CALL.  Crynwr drivers push FLAGS first and therefore
+; tolerate IRET, but 3Com 3C90XPD.COM v5.2.6 uses a plain FAR CALL without
+; PUSHF, so IRET corrupts the stack and hangs the PC.  RETF works with both.
 ;
 ; This is deliberately assembly rather than a parameterized C interrupt
 ; function: interrupt parameter stack layouts are compiler-specific.
@@ -40,14 +42,14 @@ dm_packet_receiver_ PROC FAR
         ja      discard_packet
         mov     di,offset _dm_receive_buffer
         pop     ax
-        iret
+        retf
 
 discard_packet:
         inc     word ptr es:[_dm_receive_drops]
         xor     di,di
         mov     es,di
         pop     ax
-        iret
+        retf
 
 receive_complete:
         cmp     ax,1
@@ -69,7 +71,7 @@ receive_complete:
         pop     ds
 
 receive_return:
-        iret
+        retf
 dm_packet_receiver_ ENDP
 
 _TEXT   ENDS

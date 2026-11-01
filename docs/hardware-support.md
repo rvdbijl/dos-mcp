@@ -89,6 +89,7 @@ initialization failure.
 | mTCP-style `IPADDR`/`PACKETINT` configuration | DOSBox-X verified |
 | Concurrent endpoint and mTCP utility | Driver-dependent; not yet verified |
 | Physical NE1000/NE2000 | Not yet verified |
+| 3Com `3C90XPD.COM` v5.2.6, 3C90x PCI, physical Pentium, MS-DOS 6.22 | Verified with the `RETF` receiver and the `INT 08h` worker (RAGENT and RA-TSR: status, keys, file download); earlier builds hung |
 | Other packet-driver Ethernet adapters | API-compatible in design; unverified |
 | SLIP/PPP packet drivers | Not supported by the Ethernet framing code |
 | Wi-Fi bridges presenting Ethernet packet drivers | Unverified |

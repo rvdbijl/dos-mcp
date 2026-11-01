@@ -19,41 +19,49 @@ Implemented in `dmpacket_rx.asm`:
 1. allocation phase returns the fixed 1,518-byte buffer in `ES:DI`;
 2. an already-ready or oversized frame receives a null buffer and is dropped;
 3. completion phase records only `CX` and a ready byte;
-4. the handler returns with `IRET`.
+4. the handler returns with `RETF`.
+
+The packet-driver specification calls the receiver with a FAR CALL. Crynwr
+drivers push FLAGS first and tolerate `IRET`, but some vendor drivers (3Com
+`3C90XPD.COM` v5.2.6) use a plain FAR CALL; `IRET` would pop an extra word
+as FLAGS and corrupt the interrupted stack. `RETF` is correct for both.
 
 Loss is expected and recovered through modern-host request retries.
 
-### `INT 1Ch` resident entry
+### `INT 1Ch` entry (count only)
 
-Implemented in `ratsr_hooks.asm`:
+`ratsr_hooks.asm` counts `INT 1Ch` entries and far-chains the prior handler.
+It does not run the worker. The AT BIOS calls `INT 1Ch` from its IRQ0 handler
+before sending EOI, so IRQ0 and every lower-priority IRQ (keyboard, NICs behind
+the IRQ2 cascade) are still blocked in the PIC there. A packet driver that
+waits for its own transmit interrupt inside `send_pkt` (3Com `3C90XPD.COM`)
+deadlocks if the worker sends a frame from that context.
 
-- save all general/segment registers;
-- load resident DGROUP;
-- if a worker is already active, restore and chain immediately;
-- save the interrupted `SS:SP`;
-- switch atomically to the private 32 KiB resident stack;
-- set direction forward and enable interrupts;
-- call the bounded C worker;
-- disable interrupts, restore the exact original stack, clear active state;
-- restore registers and far-chain the prior `INT 1Ch` handler.
+### `INT 08h` resident entry
 
-Nested timer ticks still reach the previous handler but cannot run a second
-RA-TSR worker. Packet IRQs may fill the single receive buffer while the worker
-runs; an already-ready frame is dropped.
+RA-TSR owns the hardware timer vector. It records the current RA `INT 1Ch`
+entry generation, invokes the saved `INT 08h` handler first using an
+interrupt-compatible far call, and runs the worker after that handler returns,
+i.e. after the BIOS has acknowledged IRQ0. On every tick it:
 
-### `INT 08h` watchdog entry
+- saves all general/segment registers and loads resident DGROUP;
+- if a worker is already active, counts a busy skip and returns;
+- saves the interrupted `SS:SP` and switches atomically to the private
+  32 KiB resident stack;
+- sets direction forward and enables interrupts;
+- calls one bounded non-DOS C worker step;
+- disables interrupts, restores the exact original stack, clears active state.
 
-RA-TSR also owns the hardware timer vector. It records the current RA
-`INT 1Ch` entry generation, invokes the saved `INT 08h` handler first using an
-interrupt-compatible far call, and checks the generation after that handler
-returns. The normal BIOS path invokes the current `INT 1Ch`, so no additional
-worker runs. If a foreground program replaced `INT 1Ch` without chaining, the
-watchdog runs one bounded non-DOS worker step on the private stack.
+The fallback counter still records ticks where the RA `INT 1Ch` entry was
+bypassed by a foreground program. The worker still runs one step per timer
+tick. The handler never calls DOS and does not send an extra PIC EOI; the
+saved BIOS handler retains responsibility for timer accounting and
+acknowledgement.
 
-The watchdog uses the same active flag as `INT 1Ch` and `INT 28h`. A nested
-timer still reaches the saved BIOS handler, but cannot enter a second worker.
-The watchdog never calls DOS and does not send an extra PIC EOI; the saved
-BIOS handler retains responsibility for timer accounting and acknowledgement.
+Nested timer ticks still reach the saved BIOS handler but cannot enter a second
+worker. The `INT 08h` and `INT 28h` entries share one active flag. Packet IRQs
+may fill the single receive buffer while the worker runs; an already-ready
+frame is dropped.
 
 The current build measures a 32 KiB private stack and retains the exact
 linker-derived PSP extent (about 74 KiB in the DOSBox-X build). The stack is
@@ -91,7 +99,7 @@ middle of a chain would be unsafe.
 | Work | Resident rule |
 |---|---|
 | Packet decode/MAC | one bounded received datagram |
-| Hardware watchdog | one fallback step only when RA `INT 1Ch` was bypassed |
+| Timer worker | one non-DOS step from `INT 08h` after the BIOS handler (after EOI) |
 | Status/capabilities | BDA/cached values only |
 | Text capture | metadata snapshot, then ≤256 VRAM bytes per response entry |
 | Keyboard insertion | direct validated BIOS ring update with preserved flags |
