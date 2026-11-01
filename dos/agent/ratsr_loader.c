@@ -242,9 +242,9 @@ static int parse_credential(
         *open_mode = 1;
         return 0;
     }
-    if (strncmp(text, "key:", 4) == 0)
+    if (strnicmp(text, "key:", 4) == 0)
         return parse_raw_key(text + 4, output);
-    if (strncmp(text, "pass:", 5) == 0) {
+    if (strnicmp(text, "pass:", 5) == 0) {
         password = text + 5;
         if (!*password)
             return -1;
