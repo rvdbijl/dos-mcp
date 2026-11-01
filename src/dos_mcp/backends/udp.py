@@ -375,17 +375,31 @@ class UdpBackend(Backend):
     def _request(self, opcode: Opcode, payload: bytes = b"") -> bytes:
         with self._lock:
             self._ensure_open()
+            renewed = False
             if self._session_key is None:
                 self._handshake()
-            self._request_id = (self._request_id + 1) & 0xFFFF or 1
-            packets = fragment_message(
-                kind=MessageKind.REQUEST,
-                opcode=opcode,
-                session_id=self._session_id,
-                request_id=self._request_id,
-                payload=payload,
-            )
-            return self._exchange(packets, self._session_key)
+                renewed = True
+            while True:
+                self._request_id = (self._request_id + 1) & 0xFFFF or 1
+                packets = fragment_message(
+                    kind=MessageKind.REQUEST,
+                    opcode=opcode,
+                    session_id=self._session_id,
+                    request_id=self._request_id,
+                    payload=payload,
+                )
+                try:
+                    return self._exchange(packets, self._session_key)
+                except TimeoutError:
+                    # The agent silently drops requests for an unknown
+                    # session (restart, unload, idle expiry).  Renew the
+                    # session once before reporting the timeout.
+                    if renewed:
+                        raise
+                    self._session_key = None
+                    self._session_id = 0
+                    self._handshake()
+                    renewed = True
 
     def _handshake(self) -> None:
         client_nonce = secrets.randbits(32)
