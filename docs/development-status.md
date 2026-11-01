@@ -11,8 +11,8 @@ remain resident.
 
 Exact PSP retention is implemented from the linker/runtime extent. The core
 also shares its mutually exclusive request and screen workspaces. The current
-DOSBox-X build retains 70,032 bytes including the PSP, with an instrumented
-32 KiB private stack and a 4,229-byte shared workspace. The multiplex memory
+DOSBox-X build retained 70,032 bytes including the PSP with a 32 KiB private stack; the stack
+is now an instrumented 4 KiB and a 4,229-byte shared workspace. The multiplex memory
 query reports paragraph count, stack high-water use, guard state, and workspace
 size.
 

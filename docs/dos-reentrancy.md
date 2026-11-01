@@ -31,7 +31,7 @@ Implemented in `ratsr_hooks.asm`:
 - load resident DGROUP;
 - if a worker is already active, restore and chain immediately;
 - save the interrupted `SS:SP`;
-- switch atomically to the private 32 KiB resident stack;
+- switch atomically to the private 4 KiB resident stack;
 - set direction forward and enable interrupts;
 - call the bounded C worker;
 - disable interrupts, restore the exact original stack, clear active state;
@@ -55,10 +55,12 @@ timer still reaches the saved BIOS handler, but cannot enter a second worker.
 The watchdog never calls DOS and does not send an extra PIC EOI; the saved
 BIOS handler retains responsibility for timer accounting and acknowledgement.
 
-The current build measures a 32 KiB private stack and retains the exact
-linker-derived PSP extent (about 74 KiB in the DOSBox-X build). The stack is
-guarded and its high-water mark is reported by the resident query; a smaller
-capacity will be selected after the full workload is measured.
+The private stack is 4 KiB. On a physical Pentium (MS-DOS 6.22, EMM386,
+SMARTDRV, 3C90XPD.COM) the high-water mark stayed at 248-322 bytes across
+status, text and VGA 13h capture, key injection and file transfers, so the
+former 32 KiB stack was reduced and the exact linker-derived PSP extent shrinks
+by 28 KiB. The stack is guarded and its high-water mark is reported by the
+resident query.
 
 ### `INT 28h` DOS-idle entry
 
@@ -158,7 +160,8 @@ RA-TSR. It is not installed or exposed as a product endpoint.
 
 ## Still requiring hardware verification
 
-- private-stack high-water mark and retained paragraph count;
+- private-stack high-water mark on 8088/286-class machines and with other
+  packet drivers (one Pentium with 3C90XPD.COM measured 248-322 bytes);
 - worst-case packet decode and 256-byte encode duration at 4.77 MHz;
 - timer jitter during text/file/graphics operations;
 - DOS version/critical-error behavior;

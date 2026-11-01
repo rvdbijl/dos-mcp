@@ -100,9 +100,8 @@ PicoMEM/PicoMEM2 code remains intentionally unimplemented.
 ### Real hardware
 
 - Open Watcom/runtime behavior matches DOSBox across target CPUs.
-- The current DOSBox-X build uses a guarded 32 KiB private stack and exact
-  linker-derived retention (about 74 KiB including the PSP); physical-PC
-  high-water measurements remain to be collected before reducing the stack.
+- The private stack was reduced from 32 KiB to a guarded 4 KiB after
+  physical-PC high-water measurements (248-322 bytes) across the full workload.
 - Packet-driver transmit downcalls are safe from the selected deferred context
   on representative drivers.
 - BIOS Data Area offsets and `INT 28h`/critical-error conventions match

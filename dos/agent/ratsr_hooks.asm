@@ -52,10 +52,12 @@ saved_ss        DW      ?
 saved_sp        DW      ?
 idle_active     DB      ?
         EVEN
-; Packet decoding and response encoding each use roughly 1 KiB of bounded
-; automatic storage and are nested below the worker.  Leave ample headroom for
-; the DOS/BIOS wrappers used by file and keyboard operations.
-RATSR_STACK_SIZE EQU    32768
+; The worker's measured high-water mark on a physical Pentium with
+; 3C90XPD.COM, EMM386 and SMARTDRV is 322 bytes across status, text and
+; VGA 13h capture, keys and file transfers.  4 KiB keeps more than ten times
+; that as headroom for DOS/BIOS wrappers and nested hardware interrupts; the
+; guard and the multiplex query still report the high-water mark.
+RATSR_STACK_SIZE EQU    4096
 RATSR_STACK_FILL EQU    0A5h
 resident_stack  DB      RATSR_STACK_SIZE DUP (?)
 resident_top    LABEL   WORD
