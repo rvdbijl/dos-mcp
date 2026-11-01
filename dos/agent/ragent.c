@@ -23,7 +23,9 @@
 
 #ifdef RA_TSR
 #define RESPONSE_FRAGMENT_PAYLOAD 256
-#define MAX_RESPONSE_FRAGMENTS 16
+/* 32 x 256 bytes covers an 80x50 text capture (13 + 8000 bytes). */
+#define MAX_RESPONSE_FRAGMENTS 32
+#define TSR_MAX_TEXT_ROWS 50
 #else
 #define RESPONSE_FRAGMENT_PAYLOAD DM_MAX_FRAGMENT_PAYLOAD
 #define MAX_RESPONSE_FRAGMENTS 5
@@ -1112,6 +1114,25 @@ static dm_u16 build_status(dm_u8 *output)
     return 12;
 }
 
+/*
+ * Text rows of the active mode.  EGA/VGA BIOSes keep rows-1 at 0040:0084
+ * (e.g. 49 after MODE CO80,50).  RA-TSR reads VRAM per fragment, so it can
+ * return up to TSR_MAX_TEXT_ROWS rows; RAGENT keeps its 80x25 snapshot.
+ */
+static dm_u8 text_rows(void)
+{
+#ifdef RA_TSR
+    volatile dm_u8 __far *rows_minus_one =
+        (volatile dm_u8 __far *)MK_FP(0x40, 0x84);
+    dm_u8 rows = (dm_u8)(*rows_minus_one + 1);
+
+    if ((cached_adapter == ADAPTER_EGA || cached_adapter == ADAPTER_VGA)
+        && rows >= 25 && rows <= TSR_MAX_TEXT_ROWS)
+        return rows;
+#endif
+    return 25;
+}
+
 static dm_u16 build_capabilities(dm_u8 *output)
 {
     volatile dm_u16 __far *columns =
@@ -1127,7 +1148,7 @@ static dm_u16 build_capabilities(dm_u8 *output)
 #endif
     );
     output[4] = (dm_u8)(*columns > 80 ? 80 : *columns);
-    output[5] = 25;
+    output[5] = text_rows();
     output[6] =
 #ifdef RA_TSR
         cached_adapter;
@@ -1298,6 +1319,7 @@ static dm_u16 prepare_text_capture(void)
         (volatile dm_u8 __far *)MK_FP(0x40, 0x62);
     static dm_u16 generation;
     dm_u8 cols = (dm_u8)(*columns > 80 ? 80 : *columns);
+    dm_u8 rows = text_rows();
     dm_u8 page = *active_page <= 7 ? *active_page : 0;
     dm_u16 cursor;
 
@@ -1305,7 +1327,7 @@ static dm_u16 prepare_text_capture(void)
         cols = 80;
     cursor = cursor_positions[page];
     text_capture_header[0] = cols;
-    text_capture_header[1] = 25;
+    text_capture_header[1] = rows;
     text_capture_header[2] = *video_mode;
     text_capture_header[3] = page;
     store_cursor_metadata(
@@ -1313,14 +1335,14 @@ static dm_u16 prepare_text_capture(void)
         cursor,
         *cursor_shape,
         cols,
-        25
+        rows
     );
     text_capture_header[8] = cached_adapter;
     dm_put_u16(text_capture_header + 9, 437);
     dm_put_u16(text_capture_header + 11, ++generation);
     text_capture_segment = *video_mode == 7 ? 0xB000 : 0xB800;
     text_capture_offset = *page_offset;
-    text_capture_cells = (dm_u16)cols * 25 * 2;
+    text_capture_cells = (dm_u16)cols * rows * 2;
     return 13 + text_capture_cells;
 }
 

@@ -108,7 +108,8 @@ the documented Open Watcom toolchain, and rerun the harness.
 
 ## A text screen is blank or incorrect
 
-- Verify the machine is in an 80×25 text mode.
+- Verify the machine is in a supported text mode (80×25; RA-TSR also 25–50
+  rows on EGA/VGA).
 - Verify the active page and cursor are valid.
 - Mode 7 uses monochrome memory at `B000h`; other implemented text modes use
   `B800h`.

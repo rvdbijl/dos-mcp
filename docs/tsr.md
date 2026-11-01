@@ -9,7 +9,8 @@ building the TSR did not replace or convert the foreground agent.
 The resident agent supports:
 
 - authenticated status and capability queries;
-- 80×25 text-mode screen capture from the active BIOS page;
+- text-mode screen capture from the active BIOS page (80×25; 25–50 rows on
+  EGA/VGA, read from the BIOS data area);
 - BIOS keyboard-buffer insertion;
 - raw CGA, Hercules, EGA, and VGA graphics capture for the standard modes
   listed in [Video capture](video-capture.md);

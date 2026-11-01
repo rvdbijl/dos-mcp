@@ -18,7 +18,9 @@ install-time adapter classification, avoiding a video-BIOS call from the
 timer worker. Mode 7 maps to `B000h`; other standard text modes map to
 `B800h` plus the BDA active-page offset.
 
-The current DOS representation is bounded to at most 80×25. Cursor and active
+RAGENT captures at most 80×25. RA-TSR takes the row count from the EGA/VGA
+BIOS data area (`0040:0084` + 1, accepted range 25–50, e.g. 80×50 after
+`MODE CO80,50`) and falls back to 25 rows on CGA/MDA. Cursor and active
 page values are validated by the Python message/domain model before MCP
 results are returned. Programs such as CheckIt may hide the hardware cursor by
 placing its BDA position just below the screen. The DOS endpoint normalizes

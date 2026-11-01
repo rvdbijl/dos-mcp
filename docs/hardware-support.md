@@ -102,6 +102,7 @@ modern bridge relies on authenticated retries.
 | Mode/adapter | Implementation | Verification |
 |---|---|---|
 | 80×25 VGA text | Implemented | DOSBox-X E2E |
+| 80×50 VGA text (RA-TSR) | Rows from BIOS data area | Physical Pentium, MS-DOS 6.22 `MODE CO80,50` |
 | 80×25 EGA text | Implemented detection/copy path | Not independently verified |
 | 80×25 CGA text | Implemented fallback/copy path | Not independently verified |
 | 80×25 MDA text, mode 7 | Implemented memory selection | Not independently verified |

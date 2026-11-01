@@ -52,7 +52,7 @@ identity tell a client what a selected target actually supports.
 The current implementation supports:
 
 - target status and capability discovery;
-- request-driven 80×25 text capture with CP437 cells and attributes;
+- request-driven text capture (80×25; up to 80×50 in RA-TSR) with CP437 cells and attributes;
 - BIOS-compatible text and named-key injection;
 - authenticated, replay-resistant UDP request/response;
 - duplicate-safe keyboard retries;
