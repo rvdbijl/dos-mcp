@@ -156,6 +156,17 @@ keeps deterministic timer progress, issues DOS-idle interrupts while
 waiting, runs `VER`, switches VGA mode, and exits so the batch file can unload
 RA-TSR. It is not installed or exposed as a product endpoint.
 
+## Resident variable addressing
+
+The hook handlers load DS with DGROUP before touching any variable, and
+`ratsr_hooks.asm` therefore declares `ASSUME DS:DGROUP`. With `DS:NOTHING`
+the assembler encodes the module's own `_BSS` variables (`saved_ss`,
+`saved_sp`, `idle_active`) relative to the `_BSS` segment frame; because
+`_BSS` does not start on the DGROUP paragraph, those accesses were displaced
+into `dm_receive_buffer` and a received frame longer than about 360 bytes
+overwrote the saved stack and the worker-active flag. Keep every variable
+access in the hook module DGROUP-relative.
+
 ## Still requiring hardware verification
 
 - private-stack high-water mark and retained paragraph count;
