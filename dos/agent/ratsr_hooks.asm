@@ -64,7 +64,7 @@ _ratsr_resident_end LABEL BYTE
 _BSS    ENDS
 
 _TEXT   SEGMENT BYTE PUBLIC 'CODE'
-        ASSUME  CS:_TEXT, DS:NOTHING
+        ASSUME  CS:_TEXT, DS:DGROUP
         EXTRN   ratsr_idle_worker_:NEAR
         EXTRN   ratsr_prepare_unload_:NEAR
         PUBLIC  ratsr_idle_handler_
