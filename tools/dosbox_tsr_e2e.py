@@ -105,6 +105,7 @@ def main() -> None:
     content = b"small-transfer"
     try:
         status = backend.get_status()
+        assert status.agent_version == "0.4"
         capabilities = backend.get_capabilities()
         if status.phase != "observe_ready":
             raise AssertionError(f"unexpected TSR phase: {status.phase}")

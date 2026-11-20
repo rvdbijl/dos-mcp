@@ -31,7 +31,7 @@ if [[ ! -f "$build_dir/NE2000.COM" ]]; then
     echo "Set PACKET_DRIVER to a Crynwr-compatible NE2000.COM." >&2
     exit 2
 fi
-rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/ZERO.LOG" \
+rm -f -- "$build_dir/PROTO.LOG" "$build_dir/CFG.LOG" "$build_dir/RX.LOG" "$build_dir/ZERO.LOG" \
     "$build_dir/ZERO-U.LOG" "$build_dir/TSR.LOG" "$build_dir/QUERY.LOG" \
     "$build_dir/UNLOAD.LOG" "$build_dir/COREERR.LOG"
 rm -rf -- "$build_dir/REMOTE"
@@ -72,11 +72,12 @@ done
 grep -q "RA-TSR unloaded" "$build_dir/UNLOAD.LOG"
 grep -q "PASS protocol vectors" "$build_dir/PROTO.LOG"
 grep -q "PASS mTCP configuration vectors" "$build_dir/CFG.LOG"
+grep -q "PASS packet receiver far call" "$build_dir/RX.LOG"
 grep -Fq 'using MTCPCFG C:\MTCP.CFG' "$build_dir/TSR.LOG"
 grep -Fq 'root ALL, access RW' "$build_dir/TSR.LOG"
 grep -Fq 'WARNING: UNRESTRICTED FILE ACCESS - ALL DOS DRIVES EXPOSED.' \
     "$build_dir/TSR.LOG"
-grep -Fq 'loading "DOSBOX-TSR" at 10.0.2.15:21300' \
+grep -Fq 'RA-TSR 0.4 loading "DOSBOX-TSR" at 10.0.2.15:21300' \
     "$build_dir/ZERO.LOG"
 grep -Fq 'memory: resident' "$build_dir/QUERY.LOG"
 grep -q "RA-TSR unloaded" "$build_dir/ZERO-U.LOG"

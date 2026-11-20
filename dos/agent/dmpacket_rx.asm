@@ -2,8 +2,8 @@
 ;
 ; A packet driver calls this far entry point twice.  AX=0 asks for a
 ; destination buffer and expects ES:DI in return.  AX=1 reports that CX
-; bytes have been copied.  Crynwr drivers tolerate either RETF or IRET;
-; using IRET matches the callback contract and the original Turbo C sample.
+; bytes have been copied.  ODIPKT makes a plain far call, so only CS:IP
+; belong to the return frame.  Save and restore our own copy of FLAGS.
 ;
 ; This is deliberately assembly rather than a parameterized C interrupt
 ; function: interrupt parameter stack layouts are compiler-specific.
@@ -27,6 +27,7 @@ _TEXT   SEGMENT BYTE PUBLIC 'CODE'
         PUBLIC  dm_packet_receiver_
 
 dm_packet_receiver_ PROC FAR
+        pushf
         cmp     ax,0
         jne     receive_complete
 
@@ -39,15 +40,15 @@ dm_packet_receiver_ PROC FAR
         cmp     cx,1518
         ja      discard_packet
         mov     di,offset _dm_receive_buffer
-        pop     ax
-        iret
+        jmp     short allocation_done
 
 discard_packet:
         inc     word ptr es:[_dm_receive_drops]
         xor     di,di
         mov     es,di
+allocation_done:
         pop     ax
-        iret
+        jmp     short receive_return
 
 receive_complete:
         cmp     ax,1
@@ -69,7 +70,8 @@ receive_complete:
         pop     ds
 
 receive_return:
-        iret
+        popf
+        retf
 dm_packet_receiver_ ENDP
 
 _TEXT   ENDS

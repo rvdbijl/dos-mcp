@@ -76,8 +76,10 @@ Expected outputs in `dos/build/`:
 
 - `PROTOCHK.EXE`
 - `CFGCHK.EXE`
+- `RXCHK.EXE` (test-only packet-driver callback fixture)
 - `RAGENT.EXE`
 - `RA-TSR.EXE`
+- `RA-RES.EXE`
 - `TSRHOST.EXE` (test-only foreground fixture)
 
 Run `make -C dos WATCOM=/path/to/watcom bin` to compile the same sources and
@@ -90,6 +92,8 @@ The Makefile selects 8086/8088 code generation, the small memory model,
 size optimization, stack checks off, and warnings as errors. The packet
 receive upcall is assembled separately because its register ABI cannot be
 expressed safely as a compiler-dependent C interrupt parameter list.
+`RXCHK` calls the assembled receiver with the plain far call used by ODIPKT.
+It checks the caller's stack after allocation, completion, and both drop paths.
 
 ## DOSBox-X end-to-end test
 

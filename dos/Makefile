@@ -11,9 +11,9 @@ WCL_ENV = WATCOM=$(WATCOM) \
 	EDPATH=$(WATCOM)/eddat \
 	INCLUDE=$(DOS_INCLUDE)
 
-.PHONY: all clean proto-test config-test agent tsr tsr-loader tsr-core tsr-test-host bin
+.PHONY: all clean proto-test config-test receiver-test agent tsr tsr-loader tsr-core tsr-test-host bin
 
-all: proto-test config-test agent tsr tsr-test-host
+all: proto-test config-test receiver-test agent tsr tsr-test-host
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -30,6 +30,11 @@ config-test: | $(BUILD)
 
 $(BUILD)/dmpacket_rx.obj: agent/dmpacket_rx.asm | $(BUILD)
 	$(WCL_ENV) $(WASM) -q -fo=$@ $<
+
+receiver-test: $(BUILD)/dmpacket_rx.obj
+	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx \
+		-i=include -fe=$(BUILD)/RXCHK.EXE \
+		tests/receiver_test.c agent/dmpacket.c $(BUILD)/dmpacket_rx.obj
 
 agent: $(BUILD)/dmpacket_rx.obj | $(BUILD)
 	$(WCL_ENV) $(WCL) -q -0 -ms -os -s -wx \

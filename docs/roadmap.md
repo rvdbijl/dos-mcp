@@ -16,6 +16,8 @@
 
 ### Protocol v2 and resident RA-TSR
 
+- [x] RA-TSR 0.4 includes the packet-driver far-return fix verified on a Compaq
+  Portable III with EPROODI and ODIPKT30 during local CheckIt runs.
 - [x] Preserve RAGENT and add separately named `RA-TSR.EXE`.
 - [x] Build all DOS code with 8086/8088 instruction generation.
 - [x] Private resident stack and shared timer/DOS-idle nested-worker guard.

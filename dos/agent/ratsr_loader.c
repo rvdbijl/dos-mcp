@@ -119,8 +119,8 @@ int main(int argc, char **argv)
     resident_environment[0] = install_environment;
     resident_environment[1] = 0;
     printf(
-        "RA-TSR 0.3 loading \"%s\" at %u.%u.%u.%u:%u, packet int 0x%02X, root %s, access %s%s\n",
-        install_config.name,
+        "RA-TSR %u.%u loading \"%s\" at %u.%u.%u.%u:%u, packet int 0x%02X, root %s, access %s%s\n",
+        RATSR_VERSION_MAJOR, RATSR_VERSION_MINOR, install_config.name,
         ip[0], ip[1], ip[2], ip[3], port, packet_interrupt,
         install_config.root,
         install_config.flags & RATSR_INSTALL_READ ? "R" : "",

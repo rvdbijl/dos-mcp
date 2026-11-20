@@ -25,7 +25,7 @@ dm_u8 dm_receive_buffer[DM_PACKET_MAX_FRAME];
 static int packet_access(const dm_u8 type[2], dm_u16 *handle);
 static int packet_release(dm_u8 interrupt_number, dm_u16 handle);
 static int packet_driver_present(dm_u8 interrupt_number);
-extern void __interrupt __far dm_packet_receiver(void);
+extern void __far dm_packet_receiver(void);
 
 int dm_packet_open(dm_u8 interrupt_number)
 {

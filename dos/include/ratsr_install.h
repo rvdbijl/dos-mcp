@@ -3,6 +3,9 @@
 
 #include "dmproto.h"
 
+#define RATSR_VERSION_MAJOR 0
+#define RATSR_VERSION_MINOR 4
+
 #define RATSR_MULTIPLEX 0xD05A
 #define RATSR_REPLY 0x5A5A
 #define RATSR_INSTALL_MAGIC 0x5241

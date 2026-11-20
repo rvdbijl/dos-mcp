@@ -1085,14 +1085,14 @@ static dm_u16 build_status(dm_u8 *output)
     input.h.ah = 0x30;
     intdos(&input, &result);
 #endif
-    output[0] = 0;
-    output[1] =
 #ifdef RA_TSR
-        3;
+    output[0] = RATSR_VERSION_MAJOR;
+    output[1] = RATSR_VERSION_MINOR;
     output[2] = cached_dos_major;
     output[3] = cached_dos_minor;
 #else
-        1;
+    output[0] = 0;
+    output[1] = 1;
     output[2] = result.h.al;
     output[3] = result.h.ah;
 #endif

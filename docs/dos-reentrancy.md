@@ -18,8 +18,9 @@ Implemented in `dmpacket_rx.asm`:
 
 1. allocation phase returns the fixed 1,518-byte buffer in `ES:DI`;
 2. an already-ready or oversized frame receives a null buffer and is dropped;
-3. completion phase records only `CX` and a ready byte;
-4. the handler returns with `IRET`.
+3. completion records the length, ready byte, completion count, and low BIOS tick word;
+4. both phases restore the entry flags and return with `RETF`. ODIPKT uses a
+   far call and keeps its own data immediately above the return address.
 
 Loss is expected and recovered through modern-host request retries.
 
