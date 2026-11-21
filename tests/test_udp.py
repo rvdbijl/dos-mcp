@@ -263,3 +263,23 @@ def test_udp_backend_with_wrong_key_times_out() -> None:
                 backend.get_status()
         finally:
             backend.close()
+
+
+def test_udp_backend_renews_session_after_agent_restart() -> None:
+    with RunningServer() as running:
+        backend = UdpBackend(
+            target=running.server.address,
+            key=KEY,
+            timeout=0.05,
+            retries=1,
+        )
+        try:
+            assert backend.get_status().connected is True
+            # A restarted or reloaded agent forgets the session and silently
+            # drops requests that carry the old session id.
+            running.server._session = None
+            status = backend.get_status()
+        finally:
+            backend.close()
+
+    assert status.connected is True
